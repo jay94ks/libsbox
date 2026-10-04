@@ -7,6 +7,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netinet/udp.h>
+#include <linux/xfrm.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -379,6 +380,22 @@ namespace vpn {
         }
 
         for (const Sock& s : _state->socks) {
+            // --> IKE itself must never be caught by the IPsec policies it negotiates (a
+            // site-to-site selector can cover the peer's own address): per-socket bypass
+            // policies, as every IKE daemon installs them.
+            for (uint8_t dir : { uint8_t(XFRM_POLICY_IN), uint8_t(XFRM_POLICY_OUT) }) {
+                xfrm_userpolicy_info policy;
+                std::memset(&policy, 0, sizeof(policy));
+                policy.action = XFRM_POLICY_ALLOW;
+                policy.sel.family = uint16_t(s.family);
+                policy.dir = dir;
+                bool v6 = s.family == AF_INET6;
+                if (::setsockopt(s.fd.get(), v6 ? IPPROTO_IPV6 : IPPROTO_IP, v6 ? IPV6_XFRM_POLICY : IP_XFRM_POLICY, &policy,
+                                 sizeof(policy)) < 0) {
+                    return -errno;
+                }
+            }
+
             if (!s.natT) {
                 continue;
             }

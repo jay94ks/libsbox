@@ -163,18 +163,41 @@ TEST_CASE("PSK: a wrong key is rejected with AUTHENTICATION_FAILED") {
         SIkePsk psk;
         psk.secret = "right";
         cfg.psks.push_back(psk);
+        SIkePsk phone;
+        phone.id = "@phone.test";
+        phone.secret = "phone key";
+        cfg.psks.push_back(phone);
 
         auto path = std::make_shared<FakeDataPath>();
         CIkeServer server(cfg);
         REQUIRE(co_await server.start(path) == SBOX_OK);
 
+        // --> Per-identity keys match by identity bytes, whatever ID type the client picked.
+        for (const char* id : { "@phone.test", "phone.test", "keyid:70686f6e652e74657374" }) {
+            SIkeInitiatorConfig byId = clientFor(server);
+            byId.identity = id;
+            byId.psk = "phone key";
+            CIkeInitiator device(byId);
+            CHECK_MESSAGE(co_await device.connect() == SBOX_OK, id);
+            co_await device.close();
+        }
+
+        size_t installedBefore = path->installed.size();
+        CHECK(installedBefore == 3);
         SIkeInitiatorConfig cc = clientFor(server);
         cc.identity = "@road.test";
         cc.psk = "wrong";
         CIkeInitiator client(cc);
         CHECK(co_await client.connect() == -EACCES);
         CHECK(client.lastNotify() == EIKE_N_AUTHENTICATION_FAILED);
-        CHECK(path->installed.empty());
+        CHECK(path->installed.size() == installedBefore);
+
+        // --> A per-identity key is not accepted for another identity's default.
+        SIkeInitiatorConfig crossed = clientFor(server);
+        crossed.identity = "@road.test";
+        crossed.psk = "phone key";
+        CIkeInitiator other(crossed);
+        CHECK(co_await other.connect() == -EACCES);
         for (int32_t i = 0; i < 50 && !server.sessions().empty(); ++i) {
             co_await CEventLoop::current()->sleepFor(10);
         }

@@ -270,8 +270,8 @@ TEST_CASE("Proposal parsing, formatting and selection") {
 
     SIkeProposal chosen;
     REQUIRE(SelectIkeProposal(windows, DefaultIkeProposals(), EIKE_DH_MODP1024, EIKE_DHM_REQUIRED, nullptr, chosen));
-    CHECK(chosen.number == 1);      // --> First offer that matches anything.
-    CHECK(FormatIkeProposal(chosen) == "3des-sha1-prfsha1-modp1024");
+    CHECK(chosen.number == 2);      // --> Our preference (AES-256) wins over the offer order.
+    CHECK(FormatIkeProposal(chosen) == "aes256-sha1-prfsha1-modp1024");
 
     std::vector<SIkeProposal> strict(1);
     ParseIkeProposal("aes256gcm16-prfsha384-ecp384", EIKE_PROTO_IKE, strict[0]);

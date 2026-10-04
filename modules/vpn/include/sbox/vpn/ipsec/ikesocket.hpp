@@ -85,8 +85,10 @@ namespace vpn {
         void espHandler(FEspPacketHandler handler);
 
         /**
-         * Lets the kernel decapsulate ESP-in-UDP on the NAT-T sockets (UDP_ENCAP_ESPINUDP);
-         * used with the kernel data path. IKE messages keep arriving on the socket.
+         * Prepares the sockets for the kernel data path: the kernel decapsulates ESP-in-UDP on
+         * the NAT-T sockets (UDP_ENCAP_ESPINUDP; IKE messages keep arriving on the socket) and
+         * every socket gets IPsec bypass policies so IKE traffic is never protected by the SAs
+         * it negotiates.
          */
         int32_t enableKernelEncap();
 

@@ -416,11 +416,25 @@ namespace vpn {
         // --> First look for a match that uses the group the peer already sent a KE payload
         // for, which avoids an INVALID_KE_PAYLOAD round trip.
         bool usesDh = dhMode == EIKE_DHM_REQUIRED || (!offered.empty() && offered[0].protocol == EIKE_PROTO_IKE);
+        // --> Our order of encryption algorithms decides across all offers (so a peer listing
+        // 3DES first still gets AES when it offers it later); the other transforms follow our
+        // order within the matching offer.
         for (int32_t pass = (preferredDh && usesDh) ? 0 : 1; pass < 2; ++pass) {
             for (const SIkeProposal& ours : configured) {
-                for (const SIkeProposal& theirs : offered) {
-                    if (tryPair(ours, theirs, preferredDh, pass == 0, dhMode, filter, chosen)) {
-                        return true;
+                for (const SIkeTransform& encr : ours.ofType(EIKE_TT_ENCR)) {
+                    SIkeProposal narrowed;
+                    narrowed.protocol = ours.protocol;
+                    narrowed.transforms.push_back(encr);
+                    for (const SIkeTransform& t : ours.transforms) {
+                        if (t.type != EIKE_TT_ENCR) {
+                            narrowed.transforms.push_back(t);
+                        }
+                    }
+
+                    for (const SIkeProposal& theirs : offered) {
+                        if (tryPair(narrowed, theirs, preferredDh, pass == 0, dhMode, filter, chosen)) {
+                            return true;
+                        }
                     }
                 }
             }

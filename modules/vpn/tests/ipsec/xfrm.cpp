@@ -1,6 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
 
+#include <sbox/vpn/ipsec/ikesocket.hpp>
 #include <sbox/vpn/ipsec/xfrm.hpp>
 #include <sbox/net/rtnl.hpp>
 #include "testutil.hpp"
@@ -338,5 +339,55 @@ TEST_CASE("XFRM notifications: policy expiry and acquire") {
         ::close(fd);
         CHECK(acquired);
         mon.close();
+    }(ns));
+}
+
+TEST_CASE("Kernel-mode IKE sockets: bypass policies and UDP_ENCAP still deliver IKE messages") {
+    if (!needRoot()) {
+        return;
+    }
+
+    TempDir dir;
+    std::string ns = dir.netns("encap");
+    REQUIRE(!ns.empty());
+
+    CEventLoop loop;
+    loop.run([](std::string netns) -> TTask<void> {
+        net::CRtnl rtnl;
+        REQUIRE(rtnl.open(netns) == SBOX_OK);
+        REQUIRE(co_await rtnl.setUp(co_await rtnl.linkIndex("lo")) == SBOX_OK);
+
+        CIkeSocket server;
+        SIkeSocketOptions so;
+        so.address = "127.0.0.1";
+        so.port = 0;
+        so.natPort = 0;
+        so.netnsPath = netns;
+        REQUIRE(server.open(so) == SBOX_OK);
+        REQUIRE(server.enableKernelEncap() == SBOX_OK);
+
+        std::vector<SIkeDatagram> got;
+        server.start([&got](SIkeDatagram& dg) { got.push_back(std::move(dg)); });
+
+        CIkeSocket client;
+        REQUIRE(client.open(so) == SBOX_OK);
+        client.start([](SIkeDatagram&) {});
+
+        SEndpoint to;
+        REQUIRE(SEndpoint::fromIp("127.0.0.1", server.natPort(), to) == SBOX_OK);
+        std::vector<uint8_t> message(40, 0x2a);
+        REQUIRE(client.send(BytesOf(message), SEndpoint(), to, true) == SBOX_OK);
+        REQUIRE(client.sendKeepalive(SEndpoint(), to) == SBOX_OK);
+
+        for (int32_t i = 0; i < 100 && got.empty(); ++i) {
+            co_await CEventLoop::current()->sleepFor(10);
+        }
+
+        REQUIRE(got.size() == 1);
+        CHECK(got[0].natT);
+        CHECK(got[0].data == message);
+        CHECK(got[0].local.toString() == "127.0.0.1:" + std::to_string(server.natPort()));
+        client.close();
+        server.close();
     }(ns));
 }

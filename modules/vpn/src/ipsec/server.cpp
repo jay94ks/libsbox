@@ -91,6 +91,7 @@ namespace vpn {
             uint64_t rekeyedTo = 0;
             int64_t rekeyedAt = 0;
             bool deleting = false;          // --> Our DELETE is outstanding.
+            int64_t lastKeepalive = 0;
 
             ~Session() {
                 IkeWipe(msk);
@@ -261,15 +262,27 @@ namespace vpn {
         }
 
         /* Looks up a PSK for a peer identity. */
-        const SIkePsk* findPsk(const std::string& id) const {
+        const SIkePsk* findPsk(const SIkeId& peer) const {
             const SIkePsk* fallback = nullptr;
             for (const SIkePsk& p : config.psks) {
-                if (!p.id.empty() && p.id == id) {
+                if (p.id.empty()) {
+                    if (!fallback) {
+                        fallback = &p;
+                    }
+
+                    continue;
+                }
+
+                // --> Clients pick the ID type from the text ("phone.example" may arrive as FQDN,
+                // RFC822 or KEY_ID), so the bytes decide; "@phone.example" and "phone.example"
+                // name the same identity.
+                SIkeId want;
+                if (SIkeId::fromString(p.id, want) == SBOX_OK && want.data == peer.data) {
                     return &p;
                 }
 
-                if (p.id.empty() && !fallback) {
-                    fallback = &p;
+                if (p.id == peer.toString()) {
+                    return &p;
                 }
             }
 
@@ -902,7 +915,7 @@ namespace vpn {
                 std::string idText = s->idi.toString();
 
                 if (method == EIKE_AUTH_PSK) {
-                    const SIkePsk* psk = findPsk(idText);
+                    const SIkePsk* psk = findPsk(s->idi);
                     std::vector<uint8_t> expected;
                     if (!psk || SharedKeyAuth(s->suite.prf, BytesOf(psk->secret), BytesOf(octets), expected) != SBOX_OK
                         || !IkeSecureEquals(BytesOf(expected), BytesOf(authData))) {
@@ -1784,6 +1797,12 @@ namespace vpn {
                 }
                 else if (config.dpdSeconds && now - s->lastSeen > int64_t(config.dpdSeconds) * 1000) {
                     request(s, EIKE_X_INFORMATIONAL, {});
+                }
+
+                // --> Behind a NAT ourselves: keep the mapping alive (RFC 3948 2.3).
+                if (s->natLocal && s->natT && now - s->lastKeepalive > 20000) {
+                    socket.sendKeepalive(s->local, s->remote);
+                    s->lastKeepalive = now;
                 }
 
                 // --> Rekeyed children the peer never deleted.
