@@ -217,7 +217,7 @@ container that has stopped`, ...)로 실패합니다. `startContainer` 훅(컨�
 | OCI | box |
 |---|---|
 | `process.args/env/cwd/user(uid,gid,additionalGids,umask)` | `args`, `env`, `cwd`, `uid`, `gid`, `additionalGids`, `umask` |
-| `process.capabilities` | 이름 → 비트 마스크 5종(없으면 모두 0) |
+| `process.capabilities` | 이름 → 비트 마스크 5종(없으면 모두 0). permitted와 inheritable에 없는 ambient는 runc처럼 경고 후 버림 |
 | `process.rlimits`, `oomScoreAdj`, `noNewPrivileges` | `rlimits`, `oomScoreAdj`, `noNewPrivileges` |
 | `process.terminal`, `consoleSize` | `terminal`, `terminalRows/Columns`, 콘솔 소켓 fd |
 | `linux.namespaces` | 새로(경로 없음) 또는 들어가기(경로), `loopbackUp` = 새 network 네임스페이스 |
@@ -414,6 +414,8 @@ box의 것(clone3, setns, pivot_root, seccomp, cgroupfs ...)에 더해: `pidfd_o
   create를 하면 호출자에게 `PR_SET_CHILD_SUBREAPER`가 켜집니다.
 - init은 프로그램을 exec할 때까지(start 전까지) 런타임 프로세스의 디스크립터 사본을 close-on-exec 상태로 갖고
   있습니다(box의 동작). 그래서 상태 잠금은 상속되지 않는 POSIX 잠금을 씁니다.
+- 컨테이너 네임스페이스 훅(`createContainer`/`startContainer`)은 box의 함수 페이로드(fork)를 쓰므로 호출
+  프로세스가 단일 스레드여야 합니다(CLI는 항상 그렇고, 멀티스레드 라이브러리 사용자는 `-EBUSY`).
 - 같은 프로세스 안의 동시 잠금은 프로세스 내부 목록으로만 배제합니다(스레드 간 공유는 지원하지 않음).
 - rootless는 box의 제한대로 단일 uid/gid 매핑만(`newuidmap` 없음), 위임된 v2 cgroup이 있을 때만 cgroup을 씁니다.
 - `CJson`은 INT64_MAX보다 큰 정수를 double로 쓰므로, 그런 값(예: RLIMIT_INFINITY)은 저장된 state.json의 config에

@@ -130,7 +130,6 @@ namespace oci {
 
     /* Fills the process part of a launch spec. */
     int32_t ApplyProcess(const SProcessSpec& p, SLaunchSpec& out, std::string& error, std::vector<std::string>& warnings) {
-        (void) warnings;
         out.args = p.args;
         out.env = p.env;
         out.cwd = p.cwd.empty() ? "/" : p.cwd;
@@ -153,6 +152,14 @@ namespace oci {
             out.capabilities.permitted = capabilityMask(p.capabilities->permitted);
             out.capabilities.inheritable = capabilityMask(p.capabilities->inheritable);
             out.capabilities.ambient = capabilityMask(p.capabilities->ambient);
+
+            // --> The kernel only raises ambient capabilities that are permitted and inheritable;
+            // runc warns about the others instead of failing.
+            uint64_t allowed = out.capabilities.permitted & out.capabilities.inheritable;
+            if (out.capabilities.ambient & ~allowed) {
+                warnings.push_back("process.capabilities: ambient capabilities that are not both permitted and inheritable are dropped");
+                out.capabilities.ambient &= allowed;
+            }
         }
 
         out.rlimits.clear();
