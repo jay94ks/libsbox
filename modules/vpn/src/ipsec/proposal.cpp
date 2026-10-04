@@ -347,8 +347,19 @@ namespace vpn {
 
     /* Formats a proposal. */
     std::string FormatIkeProposal(const SIkeProposal& proposal) {
+        // --> Canonical order: encryption, integrity, PRF, DH, ESN.
+        std::vector<SIkeTransform> ordered;
+        for (uint8_t type : { uint8_t(EIKE_TT_ENCR), uint8_t(EIKE_TT_INTEG), uint8_t(EIKE_TT_PRF), uint8_t(EIKE_TT_DH),
+                              uint8_t(EIKE_TT_ESN) }) {
+            for (const SIkeTransform& t : proposal.transforms) {
+                if (t.type == type) {
+                    ordered.push_back(t);
+                }
+            }
+        }
+
         std::string out;
-        for (const SIkeTransform& t : proposal.transforms) {
+        for (const SIkeTransform& t : ordered) {
             const char* name = nullptr;
             for (const Token& tok : TOKENS) {
                 uint16_t len = t.keyLength;

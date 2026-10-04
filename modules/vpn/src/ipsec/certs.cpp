@@ -12,6 +12,7 @@
 #include <certpp/x509/cert.hpp>
 #include <certpp/x509/chain.hpp>
 #include <certpp/x509/chain/pem.hpp>
+#include <certpp/x509/chain/pfx.hpp>
 #include <certpp/x509/exts/aki.hpp>
 #include <certpp/x509/exts/bc.hpp>
 #include <certpp/x509/exts/eku.hpp>
@@ -601,6 +602,39 @@ namespace vpn {
         }
 
         return -EKEYREJECTED;
+    }
+
+    /* PKCS#12 export. */
+    int32_t ExportIkePkcs12(const CIkeCertificate& cert, std::string_view password, std::vector<uint8_t>& out, uint32_t iterations) {
+        if (!cert.isValid() || !cert.hasPrivateKey()) {
+            return -EINVAL;
+        }
+
+        CCertCollection collection;
+        SCertEntry leaf;
+        leaf.cert = cert.native();
+        leaf.privateKey = cert.privateKey();
+        size_t index = 0;
+        if (collection.add(leaf, index) != certpp::ERET_OK) {
+            return -EIO;
+        }
+
+        for (const std::vector<uint8_t>& der : cert.chain()) {
+            CCert c;
+            if (c.importDer(certpp::COctet(der.data(), der.size())) == certpp::ERET_OK) {
+                collection.add(c, index);
+            }
+        }
+
+        CPfxFormat pfx(iterations ? iterations : 100000);
+        certpp::CBuffer buffer;
+        if (pfx.save(collection, certpp::SReadOnlyByteSpan(reinterpret_cast<const uint8_t*>(password.data()), password.size()),
+                     buffer) != certpp::ERET_OK) {
+            return -EIO;
+        }
+
+        out.assign(buffer.toPtr(), buffer.toPtr() + buffer.size());
+        return SBOX_OK;
     }
 
     /* Generates a CA. */

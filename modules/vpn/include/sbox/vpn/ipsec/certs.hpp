@@ -149,6 +149,15 @@ namespace vpn {
                                           const std::vector<CIkeCertificate>& trusted);
 
     /**
+     * Exports a certificate, its chain and private key as PKCS#12 (PBES2/AES-256, HMAC-SHA-256),
+     * for importing a client certificate into Windows, macOS/iOS or Android.
+     * @param iterations PBKDF2 iterations (older Apple devices need modest counts).
+     * @return SBOX_OK, -EINVAL (no key) or -EIO.
+     */
+    SBOX_API int32_t ExportIkePkcs12(const CIkeCertificate& cert, std::string_view password, std::vector<uint8_t>& out,
+                                     uint32_t iterations = 100000);
+
+    /**
      * Options for generated certificates.
      */
     struct SVpnCertOptions {
