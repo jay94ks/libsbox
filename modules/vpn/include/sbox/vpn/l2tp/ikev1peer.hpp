@@ -46,6 +46,25 @@ namespace vpn {
     SBOX_API std::vector<SIkev1EspSuite> DefaultIkev1EspSuites();
 
     /**
+     * Parses a strongSwan-style Phase 1 proposal ("aes256-sha1-modp1024", "3des-sha256-modp2048",
+     * several algorithms of one kind allowed: "aes256-aes128-sha256-sha1-modp2048-ecp256");
+     * every combination is appended to `out`.
+     * @return SBOX_OK or -EINVAL.
+     */
+    SBOX_API int32_t ParseIkev1Proposal(std::string_view text, std::vector<SIkev1Suite>& out);
+
+    /**
+     * Parses an ESP proposal ("aes256-sha1", "3des-sha1", "aes128gcm16", "aes256-aes128-sha256-sha1").
+     * @return SBOX_OK or -EINVAL.
+     */
+    SBOX_API int32_t ParseIkev1EspProposal(std::string_view text, std::vector<SIkev1EspSuite>& out);
+
+    /**
+     * Formats an ESP suite ("aes256-sha1").
+     */
+    SBOX_API std::string Ikev1EspSuiteName(const SIkev1EspSuite& suite);
+
+    /**
      * IKEv1 configuration shared by the responder and the initiator.
      */
     struct SIkev1Config {
