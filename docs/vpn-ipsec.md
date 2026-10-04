@@ -197,7 +197,7 @@ VPN 클라이언트를 net 모듈의 가상 네트워크(브릿지)에 넣는 �
 sbox-ike mkcert --name vpn.example.com --ip 203.0.113.5 --out /etc/sbox/ike --user alice --routes 10.88.0.0/16
 sbox-ike mkcert --name vpn.example.com --out /etc/sbox/ike --client laptop --p12-password pw   # 클라이언트 인증서도
 sbox-ike check -c /etc/sbox/ike/config.json
-sbox-ike run -c /etc/sbox/ike/config.json [-v]      # Ctrl-C/SIGTERM: DELETE 보내고 정리 후 종료
+sbox-ike run -c /etc/sbox/ike/config.json [-v]      # Ctrl-C/SIGTERM: DELETE 보내고 정리 후 종료, SIGUSR1: SA 목록
 sbox-ike profile --ca ca.pem --server vpn.example.com --auth eap --user alice --format apple > vpn.mobileconfig
 sbox-ike nthash 's3cret'
 ```

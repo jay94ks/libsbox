@@ -605,3 +605,47 @@ TEST_CASE("INITIAL_CONTACT replaces the previous SA of the same identity and kee
         co_await server.stop();
     }());
 }
+
+TEST_CASE("Duplicated requests are answered from the responder's cache, never processed twice") {
+    CEventLoop loop;
+    loop.run([]() -> TTask<void> {
+        const Pki& pki = Pki::get();
+        SIkeServerConfig cfg = baseConfig();
+        cfg.certificate = pki.server;
+        SIkeUser alice;
+        alice.name = "alice";
+        alice.password = "s3cret";
+        cfg.users.push_back(alice);
+        cfg.fragmentSize = 700;
+
+        auto path = std::make_shared<FakeDataPath>();
+        CIkeServer server(cfg);
+        REQUIRE(co_await server.start(path) == SBOX_OK);
+
+        SIkeInitiatorConfig cc = clientFor(server);
+        cc.auth = EIKE_IAUTH_EAP;
+        cc.user = "alice";
+        cc.password = "s3cret";
+        cc.caCertificates = { pki.ca };
+        cc.fragmentSize = 700;
+        cc.duplicateRequests = true;
+        cc.pfsGroup = EIKE_DH_ECP256;
+        CIkeInitiator client(cc);
+        int32_t r = co_await client.connect();
+        REQUIRE_MESSAGE(r == SBOX_OK, "connect " << r);
+        CHECK(path->installed.size() == 1);
+        REQUIRE(co_await client.rekeyChild() == SBOX_OK);
+        CHECK(path->installed.size() == 2);
+        CHECK(path->active.size() == 1);
+        REQUIRE(co_await client.rekeyIke() == SBOX_OK);
+        CHECK(co_await client.dpd() == SBOX_OK);
+        checkMirror(client.child(), path->active);
+        CHECK(co_await client.close() == SBOX_OK);
+        for (int32_t i = 0; i < 50 && !server.sessions().empty(); ++i) {
+            co_await CEventLoop::current()->sleepFor(10);
+        }
+
+        CHECK(server.sessions().empty());
+        co_await server.stop();
+    }());
+}

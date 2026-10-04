@@ -260,8 +260,10 @@ namespace vpn {
             }
 
             auto sendAll = [&]() {
-                for (const auto& d : datagrams) {
-                    socket.send(BytesOf(d), s->local, s->remote, s->natT);
+                for (int32_t copy = 0; copy < (config.duplicateRequests ? 2 : 1); ++copy) {
+                    for (const auto& d : datagrams) {
+                        socket.send(BytesOf(d), s->local, s->remote, s->natT);
+                    }
                 }
             };
 
@@ -373,6 +375,10 @@ namespace vpn {
 
                 // --> Wait for the IKE_SA_INIT response (plain), retransmitting.
                 socket.send(BytesOf(request), localEp, serverEp, false);
+                if (config.duplicateRequests) {
+                    socket.send(BytesOf(request), localEp, serverEp, false);
+                }
+
                 int64_t now = CEventLoop::nowMs();
                 int64_t deadline = now + config.timeoutMs;
                 int64_t interval = config.retransmitMs;

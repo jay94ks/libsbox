@@ -33,7 +33,7 @@ namespace {
             "usage: sbox-ike <command> [options]\n"
             "\n"
             "commands:\n"
-            "  run -c FILE [-v]          run the IKEv2 responder in the foreground\n"
+            "  run -c FILE [-v]          run the IKEv2 responder in the foreground (SIGUSR1 lists SAs)\n"
             "  check -c FILE             validate a configuration file\n"
             "  mkcert --name HOST [--ip ADDR]... [--dns NAME]... [--out DIR] [--ecdsa] [--days N]\n"
             "         [--client NAME --p12-password PW] [--user NAME] [--routes CIDR,...]\n"
@@ -103,8 +103,33 @@ namespace {
         return r;
     }
 
-    /* Waits for SIGINT/SIGTERM on a signalfd. */
-    TTask<void> waitForSignal(int fd) {
+    /* Prints the IKE SAs. */
+    void printSessions(const CIkeServer& server) {
+        std::vector<SIkeSessionInfo> sessions = server.sessions();
+        std::fprintf(stderr, "%zu IKE SA(s)\n", sessions.size());
+        for (const SIkeSessionInfo& s : sessions) {
+            std::fprintf(stderr, "  %016llx/%016llx %-11s %-24s %-22s vip=%s %s%s\n", static_cast<unsigned long long>(s.spiI),
+                         static_cast<unsigned long long>(s.spiR), s.state.c_str(), s.identity.c_str(), s.remote.c_str(),
+                         s.virtualIp.empty() ? "-" : s.virtualIp.c_str(), s.proposal.c_str(), s.nat ? " NAT" : "");
+            for (const SIkeChildInfo& c : s.children) {
+                std::string local;
+                std::string remote;
+                for (const std::string& t : c.localTs) {
+                    local += t + " ";
+                }
+
+                for (const std::string& t : c.remoteTs) {
+                    remote += t + " ";
+                }
+
+                std::fprintf(stderr, "    child %08x_i %08x_o %s  %s=== %s\n", c.inboundSpi, c.outboundSpi, c.proposal.c_str(),
+                             local.c_str(), remote.c_str());
+            }
+        }
+    }
+
+    /* Waits for SIGINT/SIGTERM on a signalfd; SIGUSR1 prints the IKE SAs. */
+    TTask<void> waitForSignal(int fd, const CIkeServer& server) {
         while (true) {
             int32_t r = co_await CEventLoop::current()->waitFd(fd, EFDE_READ);
             if (r < 0) {
@@ -112,9 +137,16 @@ namespace {
             }
 
             signalfd_siginfo info;
-            if (::read(fd, &info, sizeof(info)) == ssize_t(sizeof(info))) {
-                co_return;
+            if (::read(fd, &info, sizeof(info)) != ssize_t(sizeof(info))) {
+                continue;
             }
+
+            if (info.ssi_signo == SIGUSR1) {
+                printSessions(server);
+                continue;
+            }
+
+            co_return;
         }
     }
 
@@ -141,7 +173,7 @@ namespace {
             co_return r;
         }
 
-        co_await waitForSignal(signalFd);
+        co_await waitForSignal(signalFd, server);
         std::fputs("sbox-ike: stopping (sending DELETE to connected clients)\n", stderr);
         co_await server.stop();
         co_return SBOX_OK;
@@ -179,6 +211,7 @@ namespace {
         sigemptyset(&mask);
         sigaddset(&mask, SIGINT);
         sigaddset(&mask, SIGTERM);
+        sigaddset(&mask, SIGUSR1);
         ::sigprocmask(SIG_BLOCK, &mask, nullptr);
         CFd sfd(::signalfd(-1, &mask, SFD_CLOEXEC | SFD_NONBLOCK));
         if (!sfd.isValid()) {

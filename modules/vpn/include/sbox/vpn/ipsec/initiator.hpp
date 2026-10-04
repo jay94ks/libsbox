@@ -55,6 +55,7 @@ namespace vpn {
         bool forceNatT = false;             // --> Fake a NAT so everything uses UDP 4500.
         bool rfc7427 = true;                // --> Announce SIGNATURE_HASH_ALGORITHMS.
         bool mobike = false;
+        bool duplicateRequests = false;     // --> Send every request twice (exercises the peer's retransmission cache).
         int64_t timeoutMs = 10000;
         int64_t retransmitMs = 500;
     };
