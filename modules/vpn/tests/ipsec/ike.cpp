@@ -251,6 +251,24 @@ TEST_CASE("EAP-MSCHAPv2 with a server certificate, and a wrong password") {
             CHECK(co_await client.close() == SBOX_OK);
         }
 
+        // --> A client that dials by address asks for that IDr; it is in the certificate's
+        // SAN, so the server answers with it instead of its default "vpn.test".
+        SIkeInitiatorConfig byIp = clientFor(server);
+        byIp.auth = EIKE_IAUTH_EAP;
+        byIp.remoteId = "127.0.0.1";
+        byIp.user = "alice";
+        byIp.password = "s3cret";
+        byIp.caCertificates = { pki.ca };
+        CIkeInitiator dialer(byIp);
+        CHECK(co_await dialer.connect() == SBOX_OK);
+        co_await dialer.close();
+
+        // --> An IDr we cannot prove is refused by the client (we answer with our own).
+        SIkeInitiatorConfig wrongIdr = byIp;
+        wrongIdr.remoteId = "@elsewhere.test";
+        CIkeInitiator confused(wrongIdr);
+        CHECK(co_await confused.connect() == -EACCES);
+
         // --> A fixed per-user address.
         SIkeInitiatorConfig cb = clientFor(server);
         cb.auth = EIKE_IAUTH_EAP;

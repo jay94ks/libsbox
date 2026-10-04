@@ -211,8 +211,10 @@ digitalSignature|keyEncipherment), 선택적으로 `<client>.pem/.p12`(clientAut
 
 ## 운영체제별 접속 방법
 
-공통: 클라이언트가 접속할 이름(또는 주소)이 서버 인증서의 SAN에 있어야 하고, `serverId`(IDr)는 그 이름과
-같아야 합니다. 서버의 UDP 500/4500을 열어야 합니다(ESP를 직접 쓰면 IP 프로토콜 50도).
+공통: 클라이언트가 접속할 이름(또는 주소)이 서버 인증서의 SAN에 있어야 합니다. 응답자의 IDr은 기본으로
+`serverId`(없으면 인증서의 첫 DNS SAN)이지만, 클라이언트가 IKE_AUTH에 IDr을 넣어 오면(macOS/iOS의 원격 ID,
+Android, strongSwan) 그것이 `serverId`이거나 인증서 SAN/DN에 묶여 있을 때 그 값으로 답합니다. 그래서
+`mkcert --name vpn.example.com --ip 203.0.113.5`로 만든 인증서 하나로 이름과 주소 어느 쪽으로 접속해도 됩니다. 서버의 UDP 500/4500을 열어야 합니다(ESP를 직접 쓰면 IP 프로토콜 50도).
 
 ### Windows 10/11 (내장 IKEv2, EAP-MSCHAPv2 또는 머신 인증서)
 

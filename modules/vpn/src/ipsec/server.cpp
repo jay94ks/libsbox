@@ -73,6 +73,8 @@ namespace vpn {
             std::vector<uint8_t> initRequest;
             std::vector<uint8_t> initResponse;
             SIkeId idi;
+            bool hasWantedIdr = false;
+            SIkeId wantedIdr;               // --> IDr the client asked for (Apple/Android/strongSwan).
             std::vector<uint8_t> idrBody;
             std::string identity;
             bool peerFragmentation = false;
@@ -259,6 +261,34 @@ namespace vpn {
             id.type = a.isV6() ? EIKE_ID_IPV6_ADDR : EIKE_ID_IPV4_ADDR;
             id.data.assign(a.bytes, a.bytes + a.length());
             return id;
+        }
+
+        /**
+         * Identity we answer with: the IDr the client asked for when it is one of ours (the
+         * configured serverId, or a name/address bound to our certificate), so clients that dial
+         * by address and clients that dial by name both see what they expect; else our default.
+         */
+        SIkeId responderId(const SessionPtr& s) const {
+            SIkeId fallback = ourId(s->local);
+            if (!s->hasWantedIdr) {
+                return fallback;
+            }
+
+            if (s->wantedIdr == fallback) {
+                return fallback;
+            }
+
+            SIkeId configured;
+            if (!config.serverId.empty() && SIkeId::fromString(config.serverId, configured) == SBOX_OK
+                && configured.data == s->wantedIdr.data) {
+                return s->wantedIdr;
+            }
+
+            if (config.certificate.isValid() && IdMatchesCertificate(s->wantedIdr, config.certificate)) {
+                return s->wantedIdr;
+            }
+
+            return fallback;
         }
 
         /* Looks up a PSK for a peer identity. */
@@ -821,7 +851,7 @@ namespace vpn {
                 return false;
             }
 
-            SIkeId id = ourId(s->local);
+            SIkeId id = responderId(s);
             s->idrBody = id.body();
             resp.push_back(payload(EIKE_PL_IDR, s->idrBody));
 
@@ -869,6 +899,9 @@ namespace vpn {
 
                 s->initialContact = findNotify(notifies, EIKE_N_INITIAL_CONTACT) != nullptr;
                 s->mobike = config.mobike && findNotify(notifies, EIKE_N_MOBIKE_SUPPORTED) != nullptr;
+                if (const SIkePayload* idrPl = FindIkePayload(payloads, EIKE_PL_IDR)) {
+                    s->hasWantedIdr = DecodeIkeId(BytesOf(idrPl->body), s->wantedIdr) == SBOX_OK;
+                }
 
                 PendingChild& pc = s->pendingChild;
                 const SIkePayload* saPl = FindIkePayload(payloads, EIKE_PL_SA);
@@ -929,7 +962,7 @@ namespace vpn {
                         co_return;
                     }
 
-                    SIkeId id = ourId(s->local);
+                    SIkeId id = responderId(s);
                     s->idrBody = id.body();
                     resp.push_back(payload(EIKE_PL_IDR, s->idrBody));
 
