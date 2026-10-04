@@ -309,6 +309,11 @@ SBoxResult r = co_await box.wait();
   (OCI 기본 가림 경로와 `/proc/sys` 등 읽기 전용 경로), `/tmp`(`tmpSize`, `tmpNoexec`), `/dev` tmpfs에
   null/zero/full/random/urandom/tty, `/dev/pts`(newinstance), `/dev/shm`(`shmSize`), `/dev/fd` 등 링크.
   마운트는 경로 깊이 순으로 정렬해 부모가 먼저 마운트됩니다.
+- merged-/usr: 정책이 호스트 `/usr`를 `/usr`에 bind하고, 호스트의 `/bin`, `/sbin`, `/lib`, `/lib32`, `/lib64`,
+  `/libx32`가 `usr/...`를 가리키는 링크이며 정책이 그 경로를 직접 마운트하지 않으면, 그 경로를 `/usr` 안의
+  대상 디렉터리에서 읽기 전용으로 bind합니다. `/usr`만 bind해도 로더(`/lib64/ld-linux-x86-64.so.2`)와
+  `#!/bin/sh`가 호스트와 같이 해석됩니다. `/etc`를 거치는 링크(`/etc/alternatives/...`)는 `/etc`를 마운트해야
+  합니다.
 - 보안: capabilities 전부 0(bounding 포함), `no_new_privs`, seccomp 기본 프로필(`seccompViolation`으로 EPERM /
   kill / log 선택, `seccompProfile`로 교체 가능), `RLIMIT_CORE` 0, 부모가 죽으면 SIGKILL.
 - reaper 사용: 샌드박스의 pid 1은 엔진의 init이고 프로그램은 pid 2입니다.
@@ -445,7 +450,8 @@ pivot_root + 읽기 전용 bind), 다른 프로세스 관찰(pid 네임스페이
 | `box_seccomp` | 표 조회, 기본 프로필 판정(인터프리터), 7개 연산자 × 15개 경계값의 64비트 비교 전수 검사, 32비트 ABI, 다중 ABI(Docker 형), 규칙 우선순위, 잘못된 프로필과 `-E2BIG`, fork한 자식에 설치해 errno/SIGSYS 확인 |
 | `box_cgroup` | 레이아웃 감지, 생성/적용/다시 열기/삭제, 프로세스 트리 추적·얼리기·모두 죽이기, v1 메모리 OOM과 `oom_kill`/peak, pids 제한, 장치 규칙(v1 컨트롤러와 v2 eBPF) |
 | `box_launch` | 새 네임스페이스에서 실행·종료 코드·입출력, exec/마운트 실패 보고, pid/uts/net/파일 시스템 격리, capabilities와 no_new_privs, reaper의 시그널 상태 전달, 내부·FIFO start gate, fd 매핑, pty(내부·콘솔 소켓), 실행 중 프로세스의 네임스페이스 들어가기, 함수 페이로드, 기존 rootfs 디렉터리와 악성 심볼릭 링크, no-pivot, sysctl/rlimit/umask, 사용자 네임스페이스 없는 mknod와 oom_score_adj, OCI 마운트 옵션 |
-| `box_sandbox` | 문서의 python 예제, 입출력과 종료 코드, 벽시계 제한(자손까지 죽음), 포크 폭탄(pids), 메모리 OOM 사유, seccomp kill/EPERM, kill 프로필에서 python, 네트워크 없음, 호스트 파일·프로세스 안 보임, CapEff 0/NoNewPrivs/Seccomp 2, `/tmp` 크기, CPU 시간 사유, cgroup 통계 출처, stdio 상속//dev/null, 설정 실패 보고, `kill()`, `CSandbox::fork`와 fork 규칙, worker 프리셋과 UNIX 소켓, strict/permissive, rootless(uid 65534로 내려간 자식), 네트워크 네임스페이스 들어가기 |
+| `box_sandbox` | 문서의 python 예제, `/usr`만 bind한 merged-/usr 정책, 입출력과 종료 코드, 벽시계 제한(자손까지 죽음), 포크 폭탄(pids), 메모리 OOM 사유, seccomp kill/EPERM, kill 프로필에서 python, 네트워크 없음, 호스트 파일·프로세스 안 보임, CapEff 0/NoNewPrivs/Seccomp 2, `/tmp` 크기, CPU 시간 사유, cgroup 통계 출처, stdio 상속//dev/null, 설정 실패 보고, `kill()`, `CSandbox::fork`와 fork 규칙, worker 프리셋과 UNIX 소켓, strict/permissive, rootless(uid 65534로 내려간 자식), 네트워크 네임스페이스 들어가기 |
+| `box_header` | `sandbox.hpp`만 포함해 `CEventLoop`로 코루틴을 돌리고 프리셋을 씀(README 예제처럼 헤더 하나로 충분한지) |
 
 테스트용 보조 프로그램(`forkbomb`, `memhog`, `badsyscall`, `cpuburn`)은 `modules/box/testhelpers/`에서
 `build/modules/box/helpers/`로 빌드되어 샌드박스에 읽기 전용으로 bind됩니다. 사용자 네임스페이스나 root가

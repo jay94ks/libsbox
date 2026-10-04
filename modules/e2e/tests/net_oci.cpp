@@ -76,6 +76,10 @@ TEST_CASE("containers on a bridge network talk TCP, a port mapping reaches one f
         net::CNetworkManager mgr(mo);
         // --> A real host has "lo" up; the throwaway "host" namespace needs it for 127.0.0.1.
         REQUIRE(co_await net::BringUpLoopback(hostNetns) == SBOX_OK);
+        if (!co_await haveNftables(hostNetns)) {
+            MESSAGE("nf_tables unavailable (port mappings need it); skipping");
+            co_return;
+        }
 
         net::SNetworkCreate req;
         req.name = "e2enet";

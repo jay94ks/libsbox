@@ -63,6 +63,20 @@ namespace {
         return loop.run(runBox(std::move(p), std::move(args)));
     }
 
+    /**
+     * True (with a MESSAGE) when the cgroup controller behind a limit was unavailable.
+     */
+    bool unenforced(const Outcome& o, const std::string& limit) {
+        for (const std::string& name : o.result.unenforced) {
+            if (name.compare(0, limit.size(), limit) == 0) {
+                MESSAGE("the " << limit << " cgroup controller is unavailable here; skipping");
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     bool canRun() {
         if (::geteuid() != 0) {
             MESSAGE("not root: cgroup limits unavailable; skipping");
@@ -157,6 +171,10 @@ TEST_CASE("a fork bomb hits the pids limit") {
     SBoxPolicy p = fx.policy();
     p.pidsMax = 16;
     Outcome o = run(p, { "forkbomb" });
+    if (unenforced(o, "pids")) {
+        return;
+    }
+
     CHECK(o.result.reason == EBEXIT_NORMAL);
     CHECK(o.result.exitCode == 3);
     CHECK(o.out.find("error EAGAIN") != std::string::npos);
@@ -175,6 +193,10 @@ TEST_CASE("allocating beyond memoryMax ends with EBEXIT_MEMORY") {
     SBoxPolicy p = fx.policy();
     p.memoryMax = 64ll << 20;
     Outcome o = run(p, { "memhog", "512" });
+    if (unenforced(o, "memory")) {
+        return;
+    }
+
     CHECK_MESSAGE(o.result.reason == EBEXIT_MEMORY, BoxExitReasonName(o.result.reason), " ", o.out);
     CHECK(o.result.oomKills > 0);
     CHECK(o.out.find("allocated") == std::string::npos);

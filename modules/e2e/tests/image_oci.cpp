@@ -381,3 +381,57 @@ TEST_CASE("an image pulled from an in-test registry is the same image and runs w
         co_await reg.stop();
     }(tmp, img));
 }
+
+TEST_CASE("rootless: an unprivileged user loads, bundles and runs the image") {
+    if (!canRun()) {
+        return;
+    }
+
+    TempDir tmp;
+    ImageFixture img;
+    REQUIRE(buildImage(tmp.path, img));
+    std::string archivePath = tmp / "busy.tar";
+    REQUIRE(writeDockerSave(img, TAG, archivePath));
+
+    // --> Everything the user touches belongs to uid 65534 (no shared store, no cgroup delegation).
+    std::string home = tmp / "home";
+    CFile::makeDirs(home + "/run", 0700);
+    REQUIRE(::chown(home.c_str(), 65534, 65534) == 0);
+    REQUIRE(::chown((home + "/run").c_str(), 65534, 65534) == 0);
+    ::chmod((home + "/run").c_str(), 0700);
+
+    CEventLoop loop;
+    loop.run([](const TempDir& t, std::string userHome, std::string archive) -> TTask<void> {
+        RunOptions as;
+        as.uid = 65534;
+        as.gid = 65534;
+        as.env = Args("HOME=" + userHome, "XDG_RUNTIME_DIR=" + userHome + "/run", "XDG_DATA_HOME=" + userHome + "/data");
+
+        // --> Default store ($XDG_DATA_HOME/sbox/image) and default state root ($XDG_RUNTIME_DIR/sbox).
+        ToolResult load = co_await runTool(t.path, tool("sbox-image"), Args("-q", "load", "-i", archive), as);
+        REQUIRE_MESSAGE(load.code == 0, load.err);
+        CHECK(CFile::exists(userHome + "/data/sbox/image/index.json"));
+
+        std::string bundle = userHome + "/bundle";
+        ToolResult b = co_await runTool(t.path, tool("sbox-image"),
+            Args("-q", "--json", "bundle", TAG, bundle, "--", "/bin/sh", "-c", "id -u; cat /etc/motd; cat /proc/self/uid_map"), as);
+        REQUIRE_MESSAGE(b.code == 0, b.err);
+        CHECK(parseJson(b.out).get("Snapshotter").asString() == "copy");
+
+        ToolResult run = co_await runTool(t.path, tool("sbox"), Args("run", "--bundle", bundle, "e2e-rootless-" + randomSuffix()), as);
+        CHECK_MESSAGE(run.code == 0, run.err);
+        std::vector<std::string> lines;
+        for (std::string_view l : CFile::splitLines(run.out)) {
+            lines.emplace_back(l);
+        }
+
+        REQUIRE_MESSAGE(lines.size() == 3, run.out);
+        CHECK(lines[0] == "0");
+        CHECK(lines[1] == "layer-two");
+        CHECK(lines[2].find("65534") != std::string::npos);
+        CHECK(CFile::exists(userHome + "/run/sbox"));
+
+        ToolResult rm = co_await runTool(t.path, tool("sbox-image"), Args("rm", parseJson(b.out).get("Id").asString()), as);
+        CHECK_MESSAGE(rm.code == 0, rm.err);
+    }(tmp, home, archivePath));
+}

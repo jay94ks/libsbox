@@ -19,6 +19,7 @@
 #include <sbox/core/json.hpp>
 #include <sbox/image/digest.hpp>
 #include <sbox/image/spec.hpp>
+#include <sbox/net/nftables.hpp>
 #include <sbox/core/stream.hpp>
 #include <sbox/oci/runtime.hpp>
 #include <sbox/oci/spec.hpp>
@@ -29,6 +30,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
+#include <grp.h>
 #include <random>
 #include <sched.h>
 #include <string>
@@ -199,6 +201,8 @@ namespace e2e {
         std::string netns;                  // --> Network namespace to run in (empty: ours).
         std::vector<std::string> env;       // --> Added to (or replacing in) our environment.
         int64_t timeoutMs = 120000;
+        int64_t uid = -1;                   // --> Run as this uid/gid (no supplementary groups).
+        int64_t gid = -1;
     };
 
     /**
@@ -246,7 +250,15 @@ namespace e2e {
 
         envp.push_back(nullptr);
 
+        // --> Opened here, before any uid change, so the files need not be writable by the child.
         ToolResult r;
+        CFd in(::open(inPath.c_str(), O_RDONLY | O_CLOEXEC));
+        CFd out(::open(outPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644));
+        CFd err(::open(errPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644));
+        if (!in.isValid() || !out.isValid() || !err.isValid()) {
+            co_return r;
+        }
+
         pid_t pid = ::fork();
         if (pid < 0) {
             co_return r;
@@ -263,12 +275,17 @@ namespace e2e {
                 }
             }
 
-            int in = ::open(inPath.c_str(), O_RDONLY);
-            int out = ::open(outPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-            int err = ::open(errPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-            ::dup2(in, 0);
-            ::dup2(out, 1);
-            ::dup2(err, 2);
+            if (options.uid >= 0) {
+                if (::setgroups(0, nullptr) != 0 || ::setresgid(gid_t(options.gid), gid_t(options.gid), gid_t(options.gid)) != 0 ||
+                    ::setresuid(uid_t(options.uid), uid_t(options.uid), uid_t(options.uid)) != 0) {
+                    ::_exit(126);
+                }
+            }
+
+            if (::dup2(in.get(), 0) < 0 || ::dup2(out.get(), 1) < 0 || ::dup2(err.get(), 2) < 0) {
+                ::_exit(126);
+            }
+
             ::execve(binary.c_str(), argv.data(), envp.data());
             ::_exit(127);
         }
@@ -309,6 +326,19 @@ namespace e2e {
         CJson doc;
         CJson::parse(text, doc);
         return doc;
+    }
+
+    /**
+     * Returns true when nf_tables can be programmed in `netns` (port mappings need it). Applies
+     * an empty `sbox` table there; the network manager replaces it later anyway.
+     */
+    inline TTask<bool> haveNftables(std::string netns) {
+        net::CFirewall fw;
+        if (fw.open(netns) != SBOX_OK) {
+            co_return false;
+        }
+
+        co_return co_await fw.apply(net::SFirewallState()) == SBOX_OK;
     }
 
     /**

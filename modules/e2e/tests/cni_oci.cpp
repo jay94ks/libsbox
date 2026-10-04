@@ -67,6 +67,10 @@ TEST_CASE("sbox-cni ADD prepares a namespace an OCI container then runs in") {
     CEventLoop loop;
     loop.run([](const TempDir& t, std::string bundleDir, std::string host, std::string pod) -> TTask<void> {
         REQUIRE(co_await net::BringUpLoopback(host) == SBOX_OK);
+        if (!co_await haveNftables(host)) {
+            MESSAGE("nf_tables unavailable (port mappings need it); skipping");
+            co_return;
+        }
         std::string config = R"({"cniVersion":"1.0.0","name":"e2ecni","type":"sbox-cni","bridge":"cni-e2e0",
             "stateDir":")" + (t / "net") + R"(",
             "ipam":{"type":"sbox","ranges":[[{"subnet":"10.124.0.0/24","gateway":"10.124.0.1"}]]},
