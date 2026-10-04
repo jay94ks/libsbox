@@ -550,14 +550,46 @@ namespace image {
             return SBOX_OK;
         }
 
+        // --> Short names: <root>/l/<12+ hex> -> ../snapshots/<hex>/fs (the overlay2 trick), and the
+        // mount runs with <root>/l as the working directory so lowerdir holds only the short names.
         std::string base = _store->path("snapshots") + "/";
+        std::string linkDir = _store->path("l");
+        CFile::makeDirs(linkDir, 0700);
         SMountPlan rel = plan;
         for (std::string& l : rel.lowerDirs) {
-            if (l.compare(0, base.size(), base) == 0) {
-                l = l.substr(base.size());
+            if (l.compare(0, base.size(), base) != 0) {
+                continue;
+            }
+
+            std::string tail = l.substr(base.size());
+            std::string hex = tail.substr(0, tail.find('/'));
+            std::string target = "../snapshots/" + tail;
+            if (!IsFullHexId(hex)) {
+                l = target;
+                continue;
+            }
+
+            for (size_t len = 12; len <= 64; len += 4) {
+                std::string name = hex.substr(0, len);
+                std::string link = CFile::join(linkDir, name);
+                char buf[512];
+                ssize_t n = ::readlink(link.c_str(), buf, sizeof(buf) - 1);
+                if (n >= 0 && std::string(buf, size_t(n)) == target) {
+                    l = name;
+                    break;
+                }
+
+                if (n < 0 && errno == ENOENT && (::symlink(target.c_str(), link.c_str()) == 0 || errno == EEXIST)) {
+                    n = ::readlink(link.c_str(), buf, sizeof(buf) - 1);
+                    if (n >= 0 && std::string(buf, size_t(n)) == target) {
+                        l = name;
+                        break;
+                    }
+                }
             }
         }
 
+        base = linkDir;
         data = rel.toMountData();
         if (long(data.size()) >= page) {
             _lastError = "overlay mount data too long (" + std::to_string(data.size()) + " bytes) for this kernel";
@@ -584,7 +616,7 @@ namespace image {
 
     /* Creates a container root. */
     int32_t CSnapshotter::prepare(const std::string& id, const SImageInfo& image, ESnapshotMode mode, SContainerInfo& out,
-                                  bool mountNow) {
+                                  bool mountNow, const std::string& target) {
         out = SContainerInfo();
         std::string cid = id.empty() ? RandomHex(32) : id;
         if (!validId(cid)) {
@@ -623,12 +655,12 @@ namespace image {
         }
 
         if (mode == ESNAP_COPY) {
-            out.rootfs = CFile::join(dir, "rootfs");
+            out.rootfs = target.empty() ? CFile::join(dir, "rootfs") : target;
             r = flatten(image, out.rootfs);
         } else {
             r = unpack(image);
             if (r == SBOX_OK) {
-                out.rootfs = CFile::join(dir, "merged");
+                out.rootfs = target.empty() ? CFile::join(dir, "merged") : target;
                 out.plan.upperDir = CFile::join(dir, "upper");
                 out.plan.workDir = CFile::join(dir, "work");
                 out.plan.target = out.rootfs;

@@ -227,6 +227,45 @@ namespace testsupport {
     }
 
     /**
+     * Puts a built image into a store under `name` ("" for untagged).
+     */
+    inline int32_t ImportImage(CContentStore& store, const TestImage& img, const std::string& name) {
+        for (const auto& [d, b] : img.blobs) {
+            std::string stored;
+            int32_t r = store.writeBlob(BytesOf(b), stored, d);
+            if (r != SBOX_OK) {
+                return r;
+            }
+        }
+
+        SDescriptor md;
+        md.mediaType = img.manifestType;
+        int32_t r = store.writeBlob(BytesOf(img.manifest), md.digest, img.manifestDigest);
+        if (r != SBOX_OK) {
+            return r;
+        }
+
+        md.size = int64_t(img.manifest.size());
+        return store.setRecord(name, md);
+    }
+
+    /**
+     * Reads a file into a string ("" when missing).
+     */
+    inline std::string ReadText(const std::string& path) {
+        std::string s;
+        CFile::readAll(path, s);
+        return s;
+    }
+
+    /**
+     * Returns true when the process is root (tests needing mknod/mount check this).
+     */
+    inline bool IsRoot() {
+        return ::geteuid() == 0;
+    }
+
+    /**
      * Stream that yields bytes of a string and fails (-ECONNRESET) after `failAt` bytes when set.
      */
     class CutStream : public IStream {

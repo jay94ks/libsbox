@@ -218,10 +218,12 @@ namespace image {
          * Creates a container root for an image.
          * @param id Container ID ([A-Za-z0-9_.-], unique); "" generates one.
          * @param mode ESNAP_AUTO picks overlay when supported.
-         * @param mountNow For overlay: also mount it at containers/<id>/merged.
+         * @param mountNow For overlay: also mount it.
+         * @param target Where the root goes instead of containers/<id>/merged (overlay mount
+         *        point) or containers/<id>/rootfs (copy), e.g. a bundle's rootfs directory.
          */
         int32_t prepare(const std::string& id, const SImageInfo& image, ESnapshotMode mode, SContainerInfo& out,
-                        bool mountNow = true);
+                        bool mountNow = true, const std::string& target = std::string());
 
         /**
          * Reads a container's metadata.

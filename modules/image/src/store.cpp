@@ -605,7 +605,7 @@ namespace image {
     }
 
     /* Points a name at a manifest. */
-    int32_t CContentStore::setRecord(const std::string& name, const SDescriptor& target) {
+    int32_t CContentStore::setRecord(const std::string& rawName, const SDescriptor& target) {
         CStoreLock lock(*this);
         SIndex index;
         int32_t r = readIndex(index);
@@ -616,12 +616,15 @@ namespace image {
         SDescriptor d = target;
         d.annotations.clear();
         d.hasPlatform = target.hasPlatform;
+        std::string name = rawName;
         if (!name.empty()) {
+            // --> Names are stored normalized ("alpine" -> "docker.io/library/alpine:latest").
             SReference ref;
-            if (SReference::parse(name, ref) != SBOX_OK) {
+            if (ParseDockerReference(rawName, ref) != SBOX_OK) {
                 return -EINVAL;
             }
 
+            name = ref.toString();
             d.annotation(ANNOTATION_IMAGE_NAME, name);
             if (ref.hasTag() && !ref.hasDigest()) {
                 d.annotation(ANNOTATION_REF_NAME, ref.tag);
@@ -679,8 +682,10 @@ namespace image {
     }
 
     /* Removes the entry of a name. */
-    int32_t CContentStore::removeRecord(const std::string& name) {
+    int32_t CContentStore::removeRecord(const std::string& rawName) {
         CStoreLock lock(*this);
+        SReference ref;
+        std::string name = ParseDockerReference(rawName, ref) == SBOX_OK ? ref.toString() : rawName;
         SIndex index;
         int32_t r = readIndex(index);
         if (r != SBOX_OK) {
