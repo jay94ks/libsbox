@@ -4,6 +4,7 @@
 #include <sbox/net/netns.hpp>
 #include <cerrno>
 #include <cstring>
+#include <map>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netinet/udp.h>
@@ -143,6 +144,7 @@ namespace vpn {
         std::vector<Sock> socks;
         FIkeDatagramHandler handler;
         FEspPacketHandler esp;
+        std::map<uint32_t, FEspPacketHandler> espBySpi;
         CEventLoop* loop = nullptr;
         bool closed = false;
         uint16_t port = 0;
@@ -336,6 +338,17 @@ namespace vpn {
                         }
 
                         if (data[0] || data[1] || data[2] || data[3]) {
+                            if (length >= 8 && !st->espBySpi.empty()) {
+                                uint32_t spi = (uint32_t(data[0]) << 24) | (uint32_t(data[1]) << 16) | (uint32_t(data[2]) << 8) | data[3];
+                                auto it = st->espBySpi.find(spi);
+                                if (it != st->espBySpi.end() && it->second) {
+                                    // --> Copy: the handler may remove itself.
+                                    FEspPacketHandler h = it->second;
+                                    h(SReadOnlyByteSpan(data, length), remote, local);
+                                    continue;
+                                }
+                            }
+
                             if (st->esp && length >= 8) {
                                 st->esp(SReadOnlyByteSpan(data, length), remote, local);
                             }
@@ -370,6 +383,20 @@ namespace vpn {
     void CIkeSocket::espHandler(FEspPacketHandler handler) {
         if (_state) {
             _state->esp = std::move(handler);
+        }
+    }
+
+    /* Installs a per-SPI ESP handler. */
+    void CIkeSocket::espSpiHandler(uint32_t spi, FEspPacketHandler handler) {
+        if (!_state) {
+            return;
+        }
+
+        if (handler) {
+            _state->espBySpi[spi] = std::move(handler);
+        }
+        else {
+            _state->espBySpi.erase(spi);
         }
     }
 
