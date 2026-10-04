@@ -119,6 +119,7 @@ namespace sbox {
     class SBOX_API CListener {
     private:
         CFd _fd;
+        SEndpoint _unixEndpoint;    // --> Requested UNIX path (the socket was bound under a temporary name).
 
     public:
         CListener() noexcept = default;
@@ -136,13 +137,17 @@ namespace sbox {
         inline int nativeHandle() const noexcept { return _fd.get(); }
 
         /**
-         * Binds and listens. A UNIX path that exists as a stale socket is replaced.
+         * Binds and listens. A UNIX path that exists as a stale socket is replaced; any other
+         * file there is -EADDRINUSE. A UNIX path appears only once the socket listens (it is
+         * bound under a temporary name in the same directory and renamed into place), so a
+         * client that waits for the file never sees ECONNREFUSED.
          * @return SBOX_OK or a negated errno.
          */
         int32_t listen(const SEndpoint& endpoint, int32_t backlog = 128) noexcept;
 
         /**
-         * Returns the bound address (useful after binding port 0).
+         * Returns the bound address (useful after binding port 0); the requested path for a
+         * UNIX path socket.
          */
         SEndpoint localEndpoint() const noexcept;
 
