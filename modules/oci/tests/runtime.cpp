@@ -931,3 +931,29 @@ TEST_CASE("rootless: an unprivileged user runs a container in a user namespace")
     CHECK(lines[1].find("65534") != std::string::npos);
     CHECK(lines[2] == "rootless");
 }
+
+TEST_CASE("a created container is deleted without being started") {
+    if (!canRun()) {
+        return;
+    }
+
+    Env env;
+    env.write(testSpec({ "sleep", "1000" }));
+
+    CEventLoop loop;
+    loop.run([](Env& e) -> TTask<void> {
+        CRuntime& rt = *e.runtime;
+        SCreateOptions o;
+        o.bundle = e.bundle;
+        REQUIRE(co_await rt.create(e.id, o) == SBOX_OK);
+        SState st;
+        REQUIRE(co_await rt.state(e.id, st) == SBOX_OK);
+        SProcStat ps;
+        REQUIRE(ReadProcStat(st.pid, ps) == SBOX_OK);
+
+        // --> runc deletes a created container without --force (it kills the waiting init).
+        REQUIRE_MESSAGE(co_await rt.remove(e.id) == SBOX_OK, rt.lastError());
+        CHECK(!ProcessAlive(st.pid, ps.startTime));
+        CHECK(co_await rt.state(e.id, st) == -ENOENT);
+    }(env));
+}
