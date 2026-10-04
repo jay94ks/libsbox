@@ -105,6 +105,8 @@ namespace sbox {
             CFd consoleRead;
             bool newUserNs = false;
             bool denySetgroups = false;
+            std::vector<SIdMap> uidMap;
+            std::vector<SIdMap> gidMap;
             bool intoCgroup = false;
 
             int keepChild(int fd) {
@@ -177,6 +179,35 @@ namespace sbox {
             }
 
             ctx.newUserNs = (newNs & ENS_USER) != 0;
+            p.newUserNs = ctx.newUserNs;
+
+            if (ctx.newUserNs) {
+                ctx.uidMap = spec.uidMappings;
+                ctx.gidMap = spec.gidMappings;
+                if (ctx.uidMap.empty()) {
+                    ctx.uidMap.push_back(SIdMap{ 0, uint32_t(::geteuid()), 1 });
+                }
+
+                if (ctx.gidMap.empty()) {
+                    ctx.gidMap.push_back(SIdMap{ 0, uint32_t(::getegid()), 1 });
+                }
+
+                // --> The setup creates files (mount points, device nodes) in filesystems of
+                // the new namespace; that needs ids mapped there: root if mapped, else the
+                // first mapped id.
+                auto pick = [](const std::vector<SIdMap>& maps) -> int64_t {
+                    for (const SIdMap& m : maps) {
+                        if (m.inside == 0 && m.count > 0) {
+                            return 0;
+                        }
+                    }
+
+                    return maps.front().inside;
+                };
+
+                p.setupUid = pick(ctx.uidMap);
+                p.setupGid = pick(ctx.gidMap);
+            }
             p.newMountNs = (newNs & ENS_MOUNT) != 0;
             p.newNetNs = (newNs & ENS_NET) != 0;
             p.newUtsNs = (newNs & ENS_UTS) != 0;
@@ -646,15 +677,8 @@ namespace sbox {
                     std::string proc = "/proc/" + std::to_string(out._pid);
 
                     if (ctx->newUserNs) {
-                        std::vector<SIdMap> uidMap = spec.uidMappings;
-                        std::vector<SIdMap> gidMap = spec.gidMappings;
-                        if (uidMap.empty()) {
-                            uidMap.push_back(SIdMap{ 0, uint32_t(::geteuid()), 1 });
-                        }
-
-                        if (gidMap.empty()) {
-                            gidMap.push_back(SIdMap{ 0, uint32_t(::getegid()), 1 });
-                        }
+                        const std::vector<SIdMap>& uidMap = ctx->uidMap;
+                        const std::vector<SIdMap>& gidMap = ctx->gidMap;
 
                         if (ctx->denySetgroups) {
                             rc = CFile::writeSome(proc + "/setgroups", "deny");

@@ -86,7 +86,9 @@ namespace sbox {
      */
     struct PlanMount {
         const char* source = nullptr;
-        int sourceFd = -1;              // --> O_PATH descriptor of a bind source (opened by the child).
+        int sourceFd = -1;              // --> Bind source opened by the child: a detached tree
+                                        //     (open_tree) or, on old kernels, an O_PATH descriptor.
+        bool detached = false;          // --> sourceFd is an open_tree clone.
         const char* target = nullptr;   // --> Relative to the new root ("usr/lib").
         const char* fstype = nullptr;
         unsigned long flags = 0;        // --> Flags for the initial mount(2).
@@ -111,7 +113,8 @@ namespace sbox {
         uid_t uid = 0;
         gid_t gid = 0;
         const char* hostPath = nullptr; // --> Host node for the bind fallback.
-        int hostFd = -1;                // --> Its O_PATH descriptor (opened by the child).
+        int hostFd = -1;                // --> Its descriptor (opened by the child, like a bind source).
+        bool detached = false;
     };
 
     /**
@@ -143,6 +146,9 @@ namespace sbox {
         bool newMountNs = false;
         bool newNetNs = false;
         bool newUtsNs = false;
+        bool newUserNs = false;
+        int64_t setupUid = -1;              // --> Mapped ids the setup runs as (new user ns).
+        int64_t setupGid = -1;
         bool earlyFork = false;             // --> Fork after namespaces (pid ns via unshare/join).
         bool reaper = false;                // --> Fork the payload after setup.
         int parentDeathSignal = 0;

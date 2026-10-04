@@ -359,6 +359,49 @@ namespace sbox {
         }
 
         /**
+         * Takes a bind source: a detached clone of its mount tree (open_tree, 5.2+) or, when
+         * that is not available, an O_PATH descriptor bound later through /proc/self/fd.
+         */
+        int takeSource(const char* path, bool recursive, int& fd, bool& detached) noexcept {
+#ifdef SYS_open_tree
+            unsigned flags = OPEN_TREE_CLONE | OPEN_TREE_CLOEXEC | (recursive ? AT_RECURSIVE : 0);
+            fd = int(::syscall(SYS_open_tree, AT_FDCWD, path, flags));
+            if (fd >= 0) {
+                detached = true;
+                return 0;
+            }
+
+            if (errno != ENOSYS) {
+                return -errno;
+            }
+#else
+            (void) recursive;
+#endif
+            detached = false;
+            fd = ::open(path, O_PATH | O_CLOEXEC);
+            return fd < 0 ? -errno : 0;
+        }
+
+        /**
+         * Attaches a source taken by takeSource() on the directory or file `destFd` (an O_PATH
+         * descriptor; `target` is its /proc/self/fd path).
+         * @return 0, or -1 with errno set.
+         */
+        int attachSource(int fd, bool detached, int destFd, const char* target, unsigned long flags) noexcept {
+            char source[32];
+
+#ifdef SYS_move_mount
+            if (detached) {
+                return int(::syscall(SYS_move_mount, fd, "", destFd, "", MOVE_MOUNT_F_EMPTY_PATH | MOVE_MOUNT_T_EMPTY_PATH));
+            }
+#else
+            (void) detached;
+            (void) destFd;
+#endif
+            return ::mount(fdPath(source, fd), target, nullptr, flags & (MS_BIND | MS_REC), nullptr);
+        }
+
+        /**
          * Closes every descriptor except `a` and `b`.
          */
         void closeAllExcept(int a, int b) noexcept {
@@ -507,6 +550,35 @@ namespace sbox {
         }
 
         /**
+         * Switches to ids mapped in the new user namespace, keeping every capability (files
+         * created by the setup must be owned by a mapped id).
+         */
+        void becomeMapped(LaunchPlan& p) noexcept {
+            if (::prctl(PR_SET_KEEPCAPS, 1, 0, 0, 0) != 0) {
+                fail(STEP_SETUID, -1, errno);
+            }
+
+            if (p.setupGid >= 0 && ::syscall(SYS_setresgid, gid_t(p.setupGid), gid_t(p.setupGid), gid_t(p.setupGid)) != 0) {
+                fail(STEP_SETGID, -1, errno);
+            }
+
+            if (p.setupUid >= 0 && ::syscall(SYS_setresuid, uid_t(p.setupUid), uid_t(p.setupUid), uid_t(p.setupUid)) != 0) {
+                fail(STEP_SETUID, -1, errno);
+            }
+
+            // --> A switch away from uid 0 clears the effective set; raise it again.
+            struct __user_cap_header_struct hdr{ _LINUX_CAPABILITY_VERSION_3, 0 };
+            struct __user_cap_data_struct data[2];
+            if (::syscall(SYS_capget, &hdr, data) == 0) {
+                data[0].effective = data[0].permitted;
+                data[1].effective = data[1].permitted;
+                ::syscall(SYS_capset, &hdr, data);
+            }
+
+            ::prctl(PR_SET_KEEPCAPS, 0, 0, 0, 0);
+        }
+
+        /**
          * Brings the loopback interface up in a new network namespace.
          */
         int loopbackUp() noexcept {
@@ -569,28 +641,30 @@ namespace sbox {
 
             const char* root = p.rootfsMode == ERFS_HOST ? "/" : p.rootPath;
 
-            // --> Open bind sources (and host devices) now: in our own mount namespace, and
-            // before the new root may cover them.
+            // --> Take bind sources (and host devices) now: in our own mount namespace, and
+            // before the new root exists. open_tree clones the source tree as it is at this
+            // moment, so a source that contains the staging directory does not pick up the
+            // new root (as a recursive bind made later would).
             for (size_t i = 0; i < p.mounts.size(); ++i) {
                 PlanMount& m = p.mounts[i];
                 if (!m.bind || m.skip) {
                     continue;
                 }
 
-                m.sourceFd = ::open(m.source, O_PATH | O_CLOEXEC);
-                if (m.sourceFd < 0) {
-                    if (errno == ENOENT && m.optional) {
+                int err = takeSource(m.source, (m.flags & MS_REC) != 0, m.sourceFd, m.detached);
+                if (err != 0) {
+                    if (err == -ENOENT && m.optional) {
                         m.skip = true;
                         continue;
                     }
 
-                    fail(STEP_MOUNT, int32_t(i), errno);
+                    fail(STEP_MOUNT, int32_t(i), -err);
                 }
             }
 
             for (PlanDevice& d : p.devices) {
                 if (d.hostPath) {
-                    d.hostFd = ::open(d.hostPath, O_PATH | O_CLOEXEC);
+                    takeSource(d.hostPath, false, d.hostFd, d.detached);
                 }
             }
 
@@ -611,7 +685,6 @@ namespace sbox {
             }
 
             char target[32];
-            char source[32];
 
             for (size_t i = 0; i < p.mounts.size(); ++i) {
                 PlanMount& m = p.mounts[i];
@@ -628,8 +701,7 @@ namespace sbox {
 
                 int rc;
                 if (m.bind) {
-                    const char* src = m.sourceFd >= 0 ? fdPath(source, m.sourceFd) : m.source;
-                    rc = ::mount(src, target, nullptr, m.flags, nullptr);
+                    rc = attachSource(m.sourceFd, m.detached, dest, target, m.flags);
                 } else {
                     rc = ::mount(m.source, target, m.fstype, m.flags, m.data);
                 }
@@ -726,7 +798,7 @@ namespace sbox {
                     }
 
                     fdPath(target, node);
-                    if (::mount(fdPath(source, d.hostFd), target, nullptr, MS_BIND, nullptr) != 0) {
+                    if (attachSource(d.hostFd, d.detached, node, target, MS_BIND) != 0) {
                         fail(STEP_DEVICE, int32_t(i), errno);
                     }
 
@@ -1167,6 +1239,12 @@ namespace sbox {
         }
 
         // --> The parent writes the id maps and joins the cgroups, then lets us continue.
+        // An unprivileged parent can only write our /proc files while we are dumpable.
+        int dumpable = ::prctl(PR_GET_DUMPABLE, 0, 0, 0, 0);
+        if (p.newUserNs && dumpable != 1) {
+            ::prctl(PR_SET_DUMPABLE, 1, 0, 0, 0);
+        }
+
         report(p.reportFd, REC_SYNC, 0, STEP_SYNC, -1, 0);
         char go = 0;
         ssize_t got;
@@ -1179,6 +1257,14 @@ namespace sbox {
 
         ::close(p.syncFd);
         p.syncFd = -1;
+
+        if (p.newUserNs && dumpable >= 0 && dumpable != 1) {
+            ::prctl(PR_SET_DUMPABLE, dumpable, 0, 0, 0);
+        }
+
+        if (p.newUserNs) {
+            becomeMapped(p);
+        }
 
         if (p.earlyFork) {
             // --> A joined or unshared pid namespace only applies to children.
