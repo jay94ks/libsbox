@@ -31,6 +31,7 @@ namespace tls {
      */
     class SBOX_API CTrustStore {
     public:
+        /** Private state (defined in the module sources). */
         struct SImpl;
 
     private:

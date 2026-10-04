@@ -122,7 +122,6 @@ namespace tls {
         std::vector<uint8_t> appBuf;        // --> Decrypted application data not yet returned.
         size_t appPos = 0;
         AsyncMutex writeLock;
-        bool writing = false;
 
         // -- Handshake.
         std::vector<uint8_t> transcript;

@@ -122,6 +122,7 @@ namespace tls {
      */
     class SBOX_API CTlsStream : public IStream {
     public:
+        /** Private state (defined in the module sources). */
         struct SImpl;
 
     private:

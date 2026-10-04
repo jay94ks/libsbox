@@ -33,19 +33,19 @@ namespace tls {
     /**
      * Returns the description of a supported suite, or nullptr.
      */
-    const SuiteInfo* FindSuite(uint16_t id);
+    SBOX_API const SuiteInfo* FindSuite(uint16_t id);
 
     /**
      * Returns the name of a suite for diagnostics ("0x....") when unknown.
      */
-    std::string SuiteName(uint16_t id);
+    SBOX_API std::string SuiteName(uint16_t id);
 
     /**
      * Protection state of one direction of a connection: an AEAD key, its IV and the record
      * sequence number. Implements the TLS 1.3 record protection (RFC 8446 5.2/5.3) and the
      * TLS 1.2 AEAD record protection (RFC 5246 6.2.3.3, RFC 5288, RFC 7905).
      */
-    class RecordCipher {
+    class SBOX_API RecordCipher {
     private:
         const SuiteInfo* _suite = nullptr;
         std::unique_ptr<certpp::crypto::CAesGcm> _gcm;
