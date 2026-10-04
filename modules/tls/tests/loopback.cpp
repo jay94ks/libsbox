@@ -285,6 +285,27 @@ TEST_CASE("TLS 1.3: HelloRetryRequest to P-256 and P-384") {
     }
 }
 
+TEST_CASE("TLS 1.3: stateless HelloRetryRequest with a cookie") {
+    CEventLoop loop;
+    Pki* shared = prepare(loop);
+    if (!shared) {
+        return;
+    }
+
+    loop.run([](Pki& p) -> TTask<void> {
+        Server server;
+        REQUIRE(co_await server.start(serving(p, "ec", std::string("-tls1_3 -stateless -groups P-256 -www"))));
+
+        Outcome o = co_await fetch(server, trusting(p));
+        CHECK(o.rc == SBOX_OK);
+        CHECK(o.report.reason == "");
+        CHECK(o.report.helloRetry);
+        CHECK(o.response.find("200 ok") != std::string::npos);
+
+        co_await server.stop();
+    }(*shared));
+}
+
 TEST_CASE("ALPN, record padding, SNI wildcard and IP address verification") {
     CEventLoop loop;
     Pki* shared = prepare(loop);

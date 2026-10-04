@@ -12,6 +12,7 @@
 #include <cerrno>
 #include <csignal>
 #include <cstdlib>
+#include <cstdio>
 #include <cstring>
 #include <fcntl.h>
 #include <string>
@@ -151,7 +152,22 @@ namespace tlstest {
     /* Runs `openssl <args...>`; returns its exit status. */
     inline TTask<int32_t> Openssl(std::vector<std::string> args, std::string* output = nullptr, const std::string& cwd = "") {
         args.insert(args.begin(), OpensslPath());
-        co_return co_await Run(args, output, cwd);
+        std::string captured;
+        int32_t rc = co_await Run(args, &captured, cwd);
+        if (rc != 0) {
+            std::string cmd;
+            for (const std::string& a : args) {
+                cmd += a + " ";
+            }
+
+            std::fprintf(stderr, "openssl failed (%d): %s\n%s\n", rc, cmd.c_str(), captured.c_str());
+        }
+
+        if (output) {
+            *output = std::move(captured);
+        }
+
+        co_return rc;
     }
 
     /**
