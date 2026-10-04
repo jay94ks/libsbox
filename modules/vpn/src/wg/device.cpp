@@ -405,14 +405,27 @@ namespace vpn {
 
                 for (int round = 0; round < 8; ++round) {
                     size_t count = 0;
+                    bool gone = false;
                     for (; count < n; ++count) {
                         uint8_t* buf = storage.data() + count * size;
                         ssize_t got = ::read(fd, buf + WG_DATA_HEADROOM, size - WG_DATA_HEADROOM - WG_DATA_TAILROOM);
+                        if (got < 0 && errno != EAGAIN && errno != EINTR) {
+                            // --> The interface was deleted under us (EBADFD): the device is over.
+                            gone = true;
+                            break;
+                        }
+
                         if (got <= 0) {
                             break;
                         }
 
                         lengths[count] = size_t(got);
+                    }
+
+                    if (gone) {
+                        self->stopUser();
+                        self->signalDone();
+                        break;
                     }
 
                     self->batching = true;
