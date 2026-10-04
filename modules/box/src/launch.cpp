@@ -3,6 +3,7 @@
 #include <sbox/core/eventloop.hpp>
 #include <sbox/core/file.hpp>
 #include "launch_child.hpp"
+#include <algorithm>
 #include <cerrno>
 #include <csignal>
 #include <cstdlib>
@@ -660,7 +661,6 @@ namespace sbox {
         int64_t deadline = CEventLoop::nowMs() + (spec.setupTimeoutMs > 0 ? spec.setupTimeoutMs : 30000);
         int32_t result = SBOX_OK;
         bool done = false;
-        bool ready = false;
         std::vector<LaunchRecord> records;
 
         while (!done) {
@@ -670,7 +670,13 @@ namespace sbox {
             }
 
             for (const LaunchRecord& rec : records) {
+                // --> Every record is absorbed, also those behind a terminal one: a quick
+                // payload's exit status may already be in the same batch.
                 LaunchSession::absorb(out, rec);
+
+                if (done) {
+                    continue;
+                }
 
                 if (rec.kind == REC_SYNC) {
                     int32_t rc = SBOX_OK;
@@ -716,19 +722,12 @@ namespace sbox {
                         out._error = rc;
                         result = rc;
                         done = true;
-                        break;
                     }
                 } else if (rec.kind == REC_ERROR) {
                     result = out._error;
                     done = true;
-                    break;
-                } else if (rec.kind == REC_READY) {
-                    ready = true;
+                } else if (rec.kind == REC_READY || rec.kind == REC_EXEC) {
                     done = true;
-                    break;
-                } else if (rec.kind == REC_EXEC) {
-                    done = true;
-                    break;
                 }
             }
 
@@ -786,7 +785,6 @@ namespace sbox {
             }
         }
 
-        (void) ready;
         co_return SBOX_OK;
     }
 
@@ -814,15 +812,19 @@ namespace sbox {
                 co_return rc;
             }
 
+            int32_t terminal = 1;   // --> 1: none yet.
             for (const LaunchRecord& rec : records) {
                 LaunchSession::absorb(*this, rec);
-                if (rec.kind == REC_ERROR) {
-                    co_return _error;
-                }
 
-                if (rec.kind == REC_EXEC) {
-                    co_return SBOX_OK;
+                if (terminal == 1 && rec.kind == REC_ERROR) {
+                    terminal = _error;
+                } else if (terminal == 1 && rec.kind == REC_EXEC) {
+                    terminal = SBOX_OK;
                 }
+            }
+
+            if (terminal != 1) {
+                co_return terminal;
             }
 
             if (_reportEof || _started) {

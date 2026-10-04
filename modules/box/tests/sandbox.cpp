@@ -701,3 +701,43 @@ TEST_CASE("rootless: an unprivileged user gets the same isolation") {
         CHECK(report.find("pids (RLIMIT_NPROC fallback)") != std::string::npos);
     }
 }
+
+TEST_CASE("network namespace mode joins a prepared namespace") {
+    if (!canRun() || ::geteuid() != 0) {
+        MESSAGE("needs root (joining a namespace the caller does not own); skipping");
+        return;
+    }
+
+    CEventLoop loop;
+    loop.run([]() -> TTask<void> {
+        // --> A process holding a network namespace with a recognisable setting, standing in
+        // for one the net module prepared.
+        SLaunchSpec holder;
+        holder.args = { "/bin/sleep", "30" };
+        holder.namespaces = { { ENS_NET, "" } };
+        holder.sysctls = { { "net.ipv4.ip_default_ttl", "77" } };
+        holder.loopbackUp = true;
+
+        CProcess proc;
+        REQUIRE(co_await CProcess::spawn(holder, proc) == SBOX_OK);
+
+        SBoxPolicy p = basePolicy();
+        p.network = EBNET_NAMESPACE;
+        p.netnsPath = "/proc/" + std::to_string(proc.pid()) + "/ns/net";
+
+        std::vector<std::string> args = { "/bin/sh", "-c", "cat /proc/sys/net/ipv4/ip_default_ttl; echo $$; grep -c : /proc/net/dev" };
+        CSandbox box = co_await CSandbox::spawn(p, args);
+        REQUIRE_MESSAGE(box.isValid(), box.failedStep(), " ", box.error());
+        box.stdinPipe().close();
+
+        std::vector<uint8_t> out;
+        co_await box.stdoutPipe().recvAll(out);
+        CHECK(std::string(out.begin(), out.end()) == "77\n2\n1\n");
+        SBoxResult r = co_await box.wait();
+        CHECK(r.reason == EBEXIT_NORMAL);
+
+        proc.kill(SIGKILL);
+        SExitStatus st;
+        co_await proc.wait(st);
+    }());
+}

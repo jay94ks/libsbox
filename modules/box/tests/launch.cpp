@@ -8,6 +8,9 @@
 #include <fcntl.h>
 #include <sys/resource.h>
 #include <sys/mount.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <cstring>
 
 using namespace sbox;
 using namespace testutil;
@@ -149,7 +152,7 @@ TEST_CASE("launch reaper forwards the payload status and is pid 1") {
     SRun r = loop.run(run(spec));
     REQUIRE_MESSAGE(r.spawn == SBOX_OK, r.step);
     CHECK(r.out == "2\n");
-    CHECK(r.status.signaled);
+    CHECK_MESSAGE(r.status.signaled, "exited ", r.status.exited, " code ", r.status.exitCode, " err ", r.err);
     CHECK(r.status.signal == SIGTERM);
 }
 
@@ -402,6 +405,107 @@ TEST_CASE("launch writes sysctls and rlimits") {
     SRun r = loop.run(run(spec));
     REQUIRE_MESSAGE(r.spawn == SBOX_OK, r.step);
     CHECK(r.out == "1\n77\n");
+}
+
+TEST_CASE("launch without a user namespace creates device nodes with mknod (root)") {
+    if (::geteuid() != 0) {
+        MESSAGE("not root; skipping");
+        return;
+    }
+
+    SLaunchSpec spec = baseSpec({ "/bin/sh", "-c",
+        "stat -c '%t:%T %a' /dev/null /dev/urandom; cat /proc/self/oom_score_adj; echo x > /dev/null && echo ok" });
+    spec.namespaces = { { ENS_PID, "" }, { ENS_MOUNT, "" }, { ENS_IPC, "" }, { ENS_UTS, "" }, { ENS_NET, "" } };
+    spec.oomScoreAdj = 500;
+
+    CEventLoop loop;
+    SRun r = loop.run(run(spec));
+    REQUIRE_MESSAGE(r.spawn == SBOX_OK, r.step);
+    CHECK(r.out == "1:3 666\n1:9 666\n500\nok\n");
+}
+
+TEST_CASE("launch start gate on a FIFO descriptor (OCI create/start)") {
+    if (!canRun()) {
+        return;
+    }
+
+    char tmpl[] = "/tmp/sbox-fifo-XXXXXX";
+    REQUIRE(::mkdtemp(tmpl) != nullptr);
+    std::string fifo = std::string(tmpl) + "/exec.fifo";
+    REQUIRE(::mkfifo(fifo.c_str(), 0600) == 0);
+
+    CEventLoop loop;
+    loop.run([](std::string path) -> TTask<void> {
+        // --> The runtime keeps the FIFO open read-write so neither side blocks on open;
+        // "start" is anyone writing one byte into it.
+        CFd gate(::open(path.c_str(), O_RDWR | O_CLOEXEC));
+        REQUIRE(gate.isValid());
+
+        SLaunchSpec spec = baseSpec({ "/bin/sh", "-c", "exit 5" });
+        spec.gate = ESG_FD;
+        spec.gateFd = gate.get();
+
+        CProcess proc;
+        REQUIRE(co_await CProcess::spawn(spec, proc) == SBOX_OK);
+        gate.reset();
+
+        co_await CEventLoop::current()->sleepFor(30);
+        SExitStatus st;
+        CHECK(proc.tryWait(st) == -EAGAIN);
+
+        CFd starter(::open(path.c_str(), O_WRONLY | O_NONBLOCK | O_CLOEXEC));
+        REQUIRE(starter.isValid());
+        CHECK(::write(starter.get(), "1", 1) == 1);
+
+        CHECK(co_await proc.wait(st, 10000) == SBOX_OK);
+        CHECK(st.exitCode == 5);
+    }(fifo));
+
+    CFile::removeTree(tmpl);
+}
+
+TEST_CASE("launch sends the pty master to a console socket") {
+    if (!canRun()) {
+        return;
+    }
+
+    CEventLoop loop;
+    loop.run([]() -> TTask<void> {
+        int sv[2];
+        REQUIRE(::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sv) == 0);
+        CFd mine(sv[0]), theirs(sv[1]);
+
+        SLaunchSpec spec = baseSpec({ "/bin/sh", "-c", "echo on-the-console" });
+        spec.terminal = true;
+        spec.consoleSocketFd = theirs.get();
+
+        CProcess proc;
+        REQUIRE(co_await CProcess::spawn(spec, proc) == SBOX_OK);
+        theirs.reset();
+
+        char byte;
+        struct iovec iov{ &byte, 1 };
+        alignas(struct cmsghdr) char control[CMSG_SPACE(sizeof(int))];
+        struct msghdr msg{};
+        msg.msg_iov = &iov;
+        msg.msg_iovlen = 1;
+        msg.msg_control = control;
+        msg.msg_controllen = sizeof(control);
+        REQUIRE(::recvmsg(mine.get(), &msg, 0) == 1);
+
+        int master = -1;
+        struct cmsghdr* cm = CMSG_FIRSTHDR(&msg);
+        REQUIRE(cm != nullptr);
+        std::memcpy(&master, CMSG_DATA(cm), sizeof(int));
+
+        CStream console{ CFd(master) };
+        std::vector<uint8_t> all;
+        co_await console.recvAll(all);
+        CHECK(std::string(all.begin(), all.end()).find("on-the-console") != std::string::npos);
+
+        SExitStatus st;
+        CHECK(co_await proc.wait(st) == SBOX_OK);
+    }());
 }
 
 TEST_CASE("mount options parse like OCI") {
