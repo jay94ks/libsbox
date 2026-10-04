@@ -466,8 +466,10 @@ namespace sbox {
          * must) and reports the payload's status before exiting.
          * @param hostPid True when the reaper lives in the caller's pid namespace (its view of
          *        the payload pid is meaningful to the caller).
+         * @param orphan Report the payload pid and exit instead of reaping (the payload is
+         *        reparented to the nearest child subreaper).
          */
-        void forkPayload(bool hostPid) noexcept {
+        void forkPayload(bool hostPid, bool orphan = false) noexcept {
             int execPipe[2];
             if (::pipe2(execPipe, O_CLOEXEC) != 0) {
                 fail(STEP_FORK, -1, errno);
@@ -488,7 +490,8 @@ namespace sbox {
 
             if (pid == 0) {
                 ::close(execPipe[0]);
-                if (::prctl(PR_SET_PDEATHSIG, SIGKILL, 0, 0, 0) != 0) {
+                // --> An orphaned payload must outlive its parent, which exits right away.
+                if (!orphan && ::prctl(PR_SET_PDEATHSIG, SIGKILL, 0, 0, 0) != 0) {
                     fail(STEP_PDEATHSIG, -1, errno);
                 }
 
@@ -501,6 +504,10 @@ namespace sbox {
 
             if (hostPid) {
                 report(gPlan->reportFd, REC_PID, 0, STEP_NONE, -1, pid);
+            }
+
+            if (orphan) {
+                ::_exit(0);
             }
 
             closeAllExcept(gPlan->reportFd, execPipe[0]);
@@ -1268,7 +1275,7 @@ namespace sbox {
 
         if (p.earlyFork) {
             // --> A joined or unshared pid namespace only applies to children.
-            forkPayload(true);
+            forkPayload(true, p.orphanPayload);
         }
 
         if (p.oomScoreAdj) {

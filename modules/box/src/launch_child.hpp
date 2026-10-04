@@ -150,6 +150,7 @@ namespace sbox {
         int64_t setupUid = -1;              // --> Mapped ids the setup runs as (new user ns).
         int64_t setupGid = -1;
         bool earlyFork = false;             // --> Fork after namespaces (pid ns via unshare/join).
+        bool orphanPayload = false;         // --> The early fork's parent exits instead of reaping.
         bool reaper = false;                // --> Fork the payload after setup.
         int parentDeathSignal = 0;
 

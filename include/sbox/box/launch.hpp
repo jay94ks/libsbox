@@ -128,6 +128,14 @@ namespace sbox {
     /**
      * Description of one containerized process: everything the launcher sets up between clone3
      * and execve. Value type; build it, then call CProcess::spawn.
+     *
+     * `orphanPayload`: when a pid namespace is joined (or created with unshare after a join), the
+     * child must fork once more so the payload lands in that namespace ("early fork"). Normally
+     * the outer process stays as the payload's reaper. With `orphanPayload` it reports the
+     * payload pid and exits at once instead, so the payload is reparented to the nearest child
+     * subreaper (an OCI shim, or a caller that set PR_SET_CHILD_SUBREAPER), the way runc's
+     * `exec` and `create` leave their processes. payloadPid() then names the payload, which is
+     * not a child of the caller; pid()/wait() refer to the outer process that has exited.
      */
     struct SLaunchSpec {
         // Process.
@@ -185,6 +193,7 @@ namespace sbox {
         EStartGate gate = ESG_NONE;
         int gateFd = -1;                        // --> ESG_FD: read end the process waits on.
         bool reaper = false;                    // --> An init forks the payload and forwards signals/status.
+        bool orphanPayload = false;             // --> See below.
         CCgroup* cgroup = nullptr;              // --> Joined before the payload runs (must outlive spawn).
         int64_t setupTimeoutMs = 30000;
     };
