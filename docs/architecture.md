@@ -65,7 +65,7 @@ SBoxResult r = co_await box.wait();
 
 `cli/` 아래 도구들은 각 모듈의 얇은 래퍼입니다: `sbox`/`sboxrun`(oci), `sbox-image`(image),
 `sboxvol`·`sboxnet`(vol, net의 Docker 플러그인 데몬), `sbox-cni`(net), `sbox-wg`(vpn/wg),
-`sbox-ike`(vpn/ipsec). 사용법은 [usage.md](usage.md)에 있습니다.
+`sbox-ike`(vpn/ipsec), `sbox-l2tp`(vpn/l2tp). 사용법은 [usage.md](usage.md)에 있습니다.
 
 ## 위협 모델
 

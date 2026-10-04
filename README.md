@@ -64,6 +64,7 @@ ctest --test-dir build -j8 --output-on-failure
 | `sbox-cni` | CNI 1.0 플러그인 |
 | `sbox-wg` | WireGuard(사용자 공간/커널) 터널과 클라이언트 설정 |
 | `sbox-ike` | IKEv2/IPsec 서버, 인증서와 OS별 클라이언트 설정 생성 |
+| `sbox-l2tp` | L2TP/IPsec 서버와 OS별 클라이언트 설정 생성 |
 
 사용법은 [docs/usage.md](docs/usage.md)를 보십시오.
 
