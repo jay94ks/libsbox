@@ -274,6 +274,18 @@ namespace net {
     };
 
     /**
+     * Returns true when this process may change the host's network: CAP_NET_ADMIN in the
+     * initial user namespace. Without it (rootless), only namespaces owned by the process's own
+     * user namespace can be configured, so sandboxes get loopback-only networking.
+     */
+    SBOX_API bool CanManageHostNetwork() noexcept;
+
+    /**
+     * Brings up the loopback interface of a namespace (the rootless default network).
+     */
+    SBOX_API TTask<int32_t> BringUpLoopback(std::string netnsPath);
+
+    /**
      * Returns the default state directory: /var/lib/sbox/net for root, else
      * $XDG_RUNTIME_DIR/sbox/net (or /tmp/sbox-<uid>/net).
      */

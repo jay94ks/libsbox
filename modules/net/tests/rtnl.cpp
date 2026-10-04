@@ -10,6 +10,7 @@
 #include <cerrno>
 #include <cstring>
 #include <net/if.h>
+#include <sys/mount.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -359,4 +360,14 @@ TEST_CASE("persistent namespaces are created, identified and removed") {
     CHECK(CNetns::remove(path) == SBOX_OK);
     CHECK_FALSE(CFile::exists(path));
     CHECK(CNetns::remove(path) == SBOX_OK);
+
+    // --> iproute2-style named namespace in a private directory (made a shared mount).
+    std::string named = dir.join("netns");
+    std::string out;
+    CHECK(CNetns::createNamed("../bad", out, named) == -EINVAL);
+    REQUIRE(CNetns::createNamed("sboxtest", out, named) == SBOX_OK);
+    CHECK(out == named + "/sboxtest");
+    CHECK(CNetns::isNetns(out));
+    CHECK(CNetns::remove(out) == SBOX_OK);
+    CHECK(::umount2(named.c_str(), MNT_DETACH) == 0);
 }

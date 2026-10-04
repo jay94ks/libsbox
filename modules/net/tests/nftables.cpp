@@ -123,6 +123,7 @@ TEST_CASE("ruleset batch has the expected structure") {
     SFirewallNetwork a;
     a.bridge = "br-a";
     a.subnets.push_back(prefix("172.18.0.0/16"));
+    a.subnets.push_back(prefix("fd00:18::/64"));
     SFirewallNetwork b;
     b.bridge = "br-b";
     b.subnets.push_back(prefix("172.19.0.0/16"));
@@ -139,9 +140,9 @@ TEST_CASE("ruleset batch has the expected structure") {
 
     std::vector<CNlMessage> msgs = CFirewall::build(state, "sbox-test");
 
-    // --> 3 table messages, 5 chains, 2 jump rules, 2 masquerade + 2 localhost rules,
+    // --> 3 table messages, 5 chains, 2 jump rules, 3 masquerade + 2 localhost rules,
     // 1 port map, 1 established, 1 icc drop, 2 isolation drops.
-    REQUIRE(msgs.size() == 3 + 5 + 2 + 4 + 1 + 1 + 1 + 2);
+    REQUIRE(msgs.size() == 3 + 5 + 2 + 5 + 1 + 1 + 1 + 2);
 
     auto cmd = [](const CNlMessage& m) { return m.type() & 0xff; };
     CHECK((msgs[0].type() >> 8) == NFNL_SUBSYS_NFTABLES);

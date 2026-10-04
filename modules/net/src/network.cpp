@@ -4,6 +4,7 @@
 #include <sbox/net/nftables.hpp>
 #include <sbox/core/file.hpp>
 #include <cerrno>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
@@ -505,6 +506,54 @@ namespace net {
         }
 
         co_return SBOX_OK;
+    }
+
+    /* Returns true when the process holds CAP_NET_ADMIN in the initial user namespace. */
+    bool CanManageHostNetwork() noexcept {
+        std::string status;
+        if (CFile::readAll("/proc/self/status", status) != SBOX_OK) {
+            return false;
+        }
+
+        size_t at = status.find("CapEff:");
+        if (at == std::string::npos) {
+            return false;
+        }
+
+        uint64_t caps = std::strtoull(status.c_str() + at + 7, nullptr, 16);
+        if (!(caps & (uint64_t(1) << 12))) {
+            return false;
+        }
+
+        // --> The initial user namespace maps the whole uid range onto itself.
+        std::string map;
+        if (CFile::readAll("/proc/self/uid_map", map) != SBOX_OK) {
+            return false;
+        }
+
+        std::vector<std::string_view> lines = CFile::splitLines(map);
+        if (lines.size() != 1) {
+            return false;
+        }
+
+        std::string line(lines[0]);
+        unsigned long long inside = 1, outside = 1, count = 0;
+        if (std::sscanf(line.c_str(), "%llu %llu %llu", &inside, &outside, &count) != 3) {
+            return false;
+        }
+
+        return inside == 0 && outside == 0 && count == 4294967295ull;
+    }
+
+    /* Brings up loopback in a namespace. */
+    TTask<int32_t> BringUpLoopback(std::string netnsPath) {
+        CRtnl rt;
+        int32_t r = rt.open(netnsPath);
+        if (r != SBOX_OK) {
+            co_return r;
+        }
+
+        co_return co_await rt.setUp(1, true);
     }
 
     /* Returns the default state directory. */

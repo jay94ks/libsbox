@@ -478,6 +478,20 @@ TEST_CASE("macvlan networks with static and DHCP physical addresses") {
     loop.run(body());
 }
 
+TEST_CASE("rootless helpers") {
+    MESSAGE("can manage host network: " << CanManageHostNetwork());
+    CHECK(DefaultNetworkStateDir().size() > 4);
+
+    if (!nettest::canCreateNetns()) {
+        return;
+    }
+
+    nettest::STempDir dir;
+    std::string ns = dir.netns("lo");
+    CEventLoop loop;
+    CHECK(loop.run(BringUpLoopback(ns)) == SBOX_OK);
+}
+
 TEST_CASE("port mapping parser") {
     SPortMapping p;
     REQUIRE(SPortMapping::parse("127.0.0.1:8080:80/udp", p) == SBOX_OK);
