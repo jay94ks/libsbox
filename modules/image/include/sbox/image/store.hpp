@@ -141,6 +141,63 @@ namespace image {
     };
 
     /**
+     * Protects content that is being produced (a pull in progress, an import) from garbage
+     * collection before an index.json entry references it.
+     *
+     * A lease is a file <root>/leases/<random>.json listing blob digests and snapshot chain
+     * IDs. The file is flock()ed while the lease object lives; the collector treats locked
+     * lease files as roots and deletes unlocked (stale) ones.
+     */
+    class SBOX_API CLease {
+    private:
+        CFd _fd;
+        std::string _path;
+        std::vector<std::string> _blobs;
+        std::vector<std::string> _snapshots;
+
+    public:
+        CLease() = default;
+
+        /** Releases the lease (deletes its file). */
+        ~CLease();
+
+        CLease(const CLease&) = delete;
+
+        CLease& operator=(const CLease&) = delete;
+
+        /**
+         * Creates the lease file.
+         */
+        int32_t open(CContentStore& store);
+
+        /**
+         * Adds a blob digest to the lease.
+         */
+        int32_t addBlob(const std::string& digest);
+
+        /**
+         * Adds a snapshot chain ID to the lease.
+         */
+        int32_t addSnapshot(const std::string& chainId);
+
+        /**
+         * Deletes the lease file.
+         */
+        void release() noexcept;
+
+        /**
+         * Reads the live (locked) leases of a store and removes stale ones.
+         */
+        static int32_t collect(CContentStore& store, std::vector<std::string>& blobs, std::vector<std::string>& snapshots);
+
+    private:
+        /**
+         * Rewrites the lease file.
+         */
+        int32_t flush();
+    };
+
+    /**
      * Content-addressed image store laid out as an OCI image layout:
      *
      *     <root>/oci-layout              {"imageLayoutVersion": "1.0.0"}
@@ -243,7 +300,9 @@ namespace image {
         int32_t listRecords(std::vector<SImageRecord>& out) const;
 
         /**
-         * Points a name at a manifest (adds or replaces the index.json entry).
+         * Points a name at a manifest (adds or replaces the index.json entry). When the name
+         * moves away from a manifest no other entry references, that manifest stays as an
+         * untagged (dangling) entry, like Docker's "<none>" images.
          * @param name Full normalized reference; empty adds an untagged (dangling) entry.
          */
         int32_t setRecord(const std::string& name, const SDescriptor& target);

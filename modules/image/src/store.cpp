@@ -251,6 +251,122 @@ namespace image {
         _offset = 0;
     }
 
+    /* Releases the lease. */
+    CLease::~CLease() {
+        release();
+    }
+
+    /* Creates the lease file. */
+    int32_t CLease::open(CContentStore& store) {
+        release();
+        // --> Under the store lock, so the collector never sees the file before it is locked.
+        CStoreLock lock(store);
+        std::string dir = store.path("leases");
+        int32_t r = CFile::makeDirs(dir, 0700);
+        if (r != SBOX_OK) {
+            return r;
+        }
+
+        _path = CFile::join(dir, RandomHex(12) + ".json");
+        int fd = ::open(_path.c_str(), O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+        if (fd < 0) {
+            int32_t err = -errno;
+            _path.clear();
+            return err;
+        }
+
+        _fd.reset(fd);
+        if (::flock(fd, LOCK_EX) != 0) {
+            return -errno;
+        }
+
+        return flush();
+    }
+
+    /* Adds a blob. */
+    int32_t CLease::addBlob(const std::string& digest) {
+        _blobs.push_back(digest);
+        return flush();
+    }
+
+    /* Adds a snapshot. */
+    int32_t CLease::addSnapshot(const std::string& chainId) {
+        _snapshots.push_back(chainId);
+        return flush();
+    }
+
+    /* Deletes the lease file. */
+    void CLease::release() noexcept {
+        if (!_path.empty()) {
+            ::unlink(_path.c_str());
+        }
+
+        _fd.reset();
+        _path.clear();
+        _blobs.clear();
+        _snapshots.clear();
+    }
+
+    /* Rewrites the lease file in place (the lock lives on this descriptor). */
+    int32_t CLease::flush() {
+        if (!_fd.isValid()) {
+            return -EBADF;
+        }
+
+        CJson j = CJson::object();
+        j.set("pid", int64_t(::getpid()));
+        j.set("blobs", CJson::fromStrings(_blobs));
+        j.set("snapshots", CJson::fromStrings(_snapshots));
+        std::string text = j.dump();
+        if (::ftruncate(_fd.get(), 0) != 0) {
+            return -errno;
+        }
+
+        if (::pwrite(_fd.get(), text.data(), text.size(), 0) != ssize_t(text.size())) {
+            return -EIO;
+        }
+
+        return SBOX_OK;
+    }
+
+    /* Reads live leases and removes stale ones. */
+    int32_t CLease::collect(CContentStore& store, std::vector<std::string>& blobs, std::vector<std::string>& snapshots) {
+        std::string dir = store.path("leases");
+        std::vector<std::string> names;
+        if (ListDirectory(dir, names) != SBOX_OK) {
+            return SBOX_OK;
+        }
+
+        for (const std::string& n : names) {
+            std::string p = CFile::join(dir, n);
+            CFd fd(::open(p.c_str(), O_RDONLY | O_CLOEXEC));
+            if (!fd.isValid()) {
+                continue;
+            }
+
+            if (::flock(fd.get(), LOCK_SH | LOCK_NB) == 0) {
+                // --> Nobody holds it: the process that created it is gone.
+                ::unlink(p.c_str());
+                continue;
+            }
+
+            CJson j;
+            if (ReadJsonFile(p, j) != SBOX_OK) {
+                continue;
+            }
+
+            for (const std::string& b : j.get("blobs").asStrings()) {
+                blobs.push_back(b);
+            }
+
+            for (const std::string& s : j.get("snapshots").asStrings()) {
+                snapshots.push_back(s);
+            }
+        }
+
+        return SBOX_OK;
+    }
+
     /* Constructs a store object. */
     CContentStore::CContentStore(std::string root) : _root(std::move(root)) {}
 
@@ -513,9 +629,14 @@ namespace image {
         }
 
         std::vector<SDescriptor> kept;
+        std::vector<SDescriptor> replaced;
         for (SDescriptor& e : index.manifests) {
             std::string en = recordName(e);
             if (!name.empty() && en == name) {
+                if (e.digest != d.digest) {
+                    replaced.push_back(e);
+                }
+
                 continue;
             }
 
@@ -538,6 +659,21 @@ namespace image {
         }
 
         kept.push_back(std::move(d));
+        for (SDescriptor& old : replaced) {
+            bool referenced = false;
+            for (const SDescriptor& e : kept) {
+                if (e.digest == old.digest) {
+                    referenced = true;
+                    break;
+                }
+            }
+
+            if (!referenced) {
+                old.annotations.clear();
+                kept.push_back(std::move(old));
+            }
+        }
+
         index.manifests = std::move(kept);
         return writeIndex(index);
     }
