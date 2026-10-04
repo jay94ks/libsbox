@@ -5,6 +5,7 @@
 #include <sbox/vpn/ipsec/mschapv2.hpp>
 #include <sbox/vpn/ipsec/eap.hpp>
 #include "ipsec/crypto.hpp"
+#include "ipsec/ikesa.hpp"
 #include <string>
 
 using namespace sbox;
@@ -301,4 +302,50 @@ TEST_CASE("EAP-MSCHAPv2 server and peer authenticate and derive the same MSK") {
     s2.start(true);
     std::vector<uint8_t> junk = { 2, 9, 0, 3 };
     CHECK(s2.process(BytesOf(junk), request) == EEAPS_FAILURE);
+}
+
+TEST_CASE("SKEYSEED, SK_* split, CHILD KEYMAT and rekey SKEYSEED match an independent computation") {
+    std::vector<uint8_t> ni = range(0x10, 32);
+    std::vector<uint8_t> nr = range(0x40, 32);
+    std::vector<uint8_t> gir = range(0x80, 32);
+
+    std::vector<uint8_t> skeyseed;
+    REQUIRE(ipsec::ComputeSkeyseed(EIKE_PRF_HMAC_SHA2_256, BytesOf(ni), BytesOf(nr), BytesOf(gir), skeyseed) == SBOX_OK);
+    CHECK(str(skeyseed) == "d962ef6e1398f0b4c4a0541c7ce335a4eb85a116a981052a841ee091a413cacb");
+
+    ipsec::Suite suite;
+    suite.encr = EIKE_ENCR_AES_CBC;
+    suite.keyBits = 256;
+    suite.integ = EIKE_INTEG_HMAC_SHA2_256_128;
+    suite.prf = EIKE_PRF_HMAC_SHA2_256;
+    ipsec::IkeKeys keys;
+    REQUIRE(ipsec::DeriveIkeKeys(suite, BytesOf(skeyseed), BytesOf(ni), BytesOf(nr), 0x0102030405060708ull, 0x1112131415161718ull,
+                                 keys) == SBOX_OK);
+
+    std::string km = "c722ec79f3a6f0fdf87e7d7286473ceedfc74bf31ac7839e19182a1423795f9ed5059c6d4aa25e27ad4c0f860b90ccd9ca06fb1931f2b2f36f0b0fa2f5e6374d9ef86245814f6807fea335556ec21e4b17b916775a7ae93b8b2b04a0e5d51382010462b0dd90c5a9331cde56e9c2c7bab1558566bee0337afcf43c5d50b22276856b5081172d29354a66752eb21ca7f0661cdc5db04232cff5fc6f18f6542a725ea13121d56eb4117e3bba0e0e9889870821a071acb94a43cc11491e739e7343e65667302cf21036f38897f1978b6ee3a95285135855d319981f0cdb08ef494c";
+    CHECK(str(keys.d) + str(keys.ai) + str(keys.ar) + str(keys.ei) + str(keys.er) + str(keys.pi) + str(keys.pr) == km);
+    CHECK(keys.ai.size() == 32);
+    CHECK(keys.ei.size() == 32);
+
+    ipsec::ChildKeys child;
+    std::vector<uint8_t> none;
+    REQUIRE(ipsec::DeriveChildKeys(EIKE_PRF_HMAC_SHA2_256, BytesOf(keys.d), BytesOf(none), BytesOf(ni), BytesOf(nr), suite, child)
+            == SBOX_OK);
+    CHECK(str(child.encIr) + str(child.integIr) + str(child.encRi) + str(child.integRi)
+          == "805d03c6852b82de66e86f2407798f6c03e6364920e12105b1e0bd6f25bd8c0a76d7646a381dab8cf3ec2a1ec97174f639109469d17a39b6c8f99eb39aaabf7f12a8648ec9f39988ef980da80392e18a3cfd336140018769d6d3a7617f7b691fdaf689a1b0e683c47c08a1bd29ccd37ffb3e6f5077d1b0e6cef96e609a475855");
+
+    std::vector<uint8_t> rekey;
+    REQUIRE(ipsec::ComputeRekeySkeyseed(EIKE_PRF_HMAC_SHA2_256, BytesOf(keys.d), BytesOf(gir), BytesOf(ni), BytesOf(nr), rekey)
+            == SBOX_OK);
+    CHECK(str(rekey) == "5049693599cb472e9e8492ad3ddde2fac3b9fd7c7ceadef12616e4ada1b0de71");
+
+    // --> AEAD suites take a 4-byte salt per direction and no integrity keys.
+    ipsec::Suite gcm;
+    gcm.encr = EIKE_ENCR_AES_GCM_16;
+    gcm.keyBits = 128;
+    gcm.prf = EIKE_PRF_HMAC_SHA2_256;
+    ipsec::IkeKeys aead;
+    REQUIRE(ipsec::DeriveIkeKeys(gcm, BytesOf(skeyseed), BytesOf(ni), BytesOf(nr), 1, 2, aead) == SBOX_OK);
+    CHECK(aead.ai.empty());
+    CHECK(aead.ei.size() == 20);
 }

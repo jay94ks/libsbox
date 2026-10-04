@@ -285,7 +285,7 @@ rasdial 'Office' alice s3cret
 
 | 테스트 | 내용 |
 |---|---|
-| `ipsec/crypto` | prf+(4개 PRF), X25519·MODP-2048 공유 비밀, AES-CBC+HMAC/AES-GCM/ChaCha20-Poly1305 봉인 — 기댓값은 Python `hmac`/`cryptography`(OpenSSL)로 독립 계산. MODP 1024/2048 소수는 OpenSSL과 안전 소수 판정으로 확인. RFC 2759 9.2와 RFC 3079 3.5.3 MS-CHAPv2 벡터, EAP-MSCHAPv2 양방향 |
+| `ipsec/crypto` | prf+(4개 PRF), SKEYSEED·SK_* 분할·CHILD KEYMAT·재키잉 SKEYSEED, X25519·MODP-2048 공유 비밀, AES-CBC+HMAC/AES-GCM/ChaCha20-Poly1305 봉인 — 기댓값은 Python `hmac`/`cryptography`(OpenSSL)로 독립 계산. MODP 1024/2048 소수는 OpenSSL과 안전 소수 판정으로 확인. RFC 2759 9.2와 RFC 3079 3.5.3 MS-CHAPv2 벡터, EAP-MSCHAPv2 양방향 |
 | `ipsec/message` | 페이로드 왕복, TS 연산, 제안 파싱/선택(Windows 제안), 무작위 변형 2만+ 회 디코더 퍼징, 암호화 페이로드 변조 거부와 단편 역순·중복 재조립, 동작 중인 응답자에 변형 패킷 1500개를 보낸 뒤 정상 접속 |
 | `ipsec/ike` | 루프백에서 응답자와 테스트 개시자: PSK, 잘못된 PSK, EAP-MSCHAPv2(RFC 7427 유무, 고정 주소, 잘못된 비밀번호, 신뢰하지 않는 서버 인증서), 인증서 양쪽(DN/FQDN/RFC822 신원, 불일치·미신뢰 거부), 단편화 양방향, CHILD(PFS)/IKE 재키잉 후 DPD·DELETE, 서버 DPD(응답·무응답), 서버 측 끊기, COOKIE, INVALID_KE, 강제 NAT-T, Windows 기본 제안, 공통 제안 없음, INITIAL_CONTACT |
 | `ipsec/esp` | ESP 왕복, 재전송 방지 창, 수작업으로 만든 RFC 4303/4106 패킷, 패딩 검사 |
