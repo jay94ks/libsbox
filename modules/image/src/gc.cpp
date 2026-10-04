@@ -150,6 +150,11 @@ namespace image {
         std::set<std::string> snapshots;
         for (const SImageRecord& rec : records) {
             markManifest(store, rec.target.digest, blobs, snapshots);
+            // --> A repo digest names the index the tag resolved to: keep that document too.
+            SReference ref;
+            if (!rec.name.empty() && SReference::parse(rec.name, ref) == SBOX_OK && ref.hasDigest()) {
+                blobs.insert(ref.digest);
+            }
         }
 
         for (const SContainerInfo& c : containers) {
