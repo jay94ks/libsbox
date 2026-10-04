@@ -96,7 +96,7 @@ namespace e2e {
      * Returns true when the CLI tools were built.
      */
     inline bool haveTools() {
-        for (const char* name : { "sbox", "sbox-image", "sbox-cni", "sboxvol" }) {
+        for (const char* name : { "sbox", "sbox-image", "sbox-cni", "sboxvol", "sboxnet" }) {
             if (::access(tool(name).c_str(), X_OK) != 0) {
                 return false;
             }

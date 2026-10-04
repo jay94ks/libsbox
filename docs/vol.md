@@ -7,7 +7,11 @@ Docker와 호환되는 이름 있는 볼륨을 제공합니다. 네임스페이�
 - `sboxvol`(`cli/sboxvol/`): 볼륨 관리 명령(`create`, `ls`, `inspect`, `rm`, `prune`, `backup`, `restore`)과
   Docker 볼륨 플러그인 데몬(`serve`).
 - `sboxnet`(`cli/sboxnet/`): net 모듈의 `CDockerPlugin`(Docker 원격 네트워크 + IPAM 드라이버)을 HTTP 서버에
-  연결한 데몬.
+  연결한 데몬. vpn 모듈의 WireGuard 오버레이 드라이버(`wg-overlay`)도 등록합니다.
+
+이미지에서 만든 OCI 번들에 볼륨을 붙이는 명령줄은 `sbox-image bundle -v/--mount/--tmpfs`입니다
+([image.md](image.md), [usage.md](usage.md)). 이 도구가 `PrepareContainerMounts`를 부르고, `sbox-image rm`이
+`releaseUser`로 볼륨을 돌려줍니다.
 
 ## 헤더
 
@@ -268,12 +272,43 @@ sboxvol [--root DIR] serve [--socket PATH]      # 기본 /run/docker/plugins/sbo
 ### sboxnet
 
 ```sh
-sboxnet [--socket PATH] [--state-dir DIR] [--no-firewall]
+sboxnet [--socket PATH] [--state-dir DIR] [--no-firewall] [--host-netns PATH] [--wg-uapi-dir DIR]
 # 기본 소켓 /run/docker/plugins/sboxnet.sock, 상태 /var/lib/sbox/net (net 모듈의 DefaultNetworkStateDir)
+# --host-netns: "호스트"로 취급할 네트워크 네임스페이스(기본: 데몬 자신의 것, 테스트용)
+# --wg-uapi-dir: 사용자 공간 WireGuard 장치의 UAPI 소켓 디렉터리(기본 /var/run/wireguard)
 ```
 
 `CNetworkManager`(상태 디렉터리)와 `CDockerPlugin`을 만들어 모든 POST 경로를 `plugin.handle(path, body)`로
 넘깁니다. net 모듈의 권고대로 `Err`가 있는 응답은 500, 나머지는 200입니다(dockerd는 두 경우 모두 Err를 읽음).
+
+데몬은 net 모듈의 드라이버(bridge, macvlan, ipvlan, host, none)에 더해 vpn 모듈의 `CWgOverlayDriver`를
+등록하고, 요청을 받기 전에 `restore()`를 불러 상태 디렉터리에 있는 오버레이 네트워크 중 장치가 없는 것(재부팅,
+또는 사용자 공간 장치를 돌리던 데몬이 끝난 경우)의 WireGuard 장치를 다시 올립니다. 커널 `wireguard` 모듈이
+없으면 장치는 사용자 공간 구현이고 이 데몬의 이벤트 루프에서 돌므로, 데몬이 끝나면 터널도 내려가고 다음 시작
+때 복구됩니다. 오버레이 네트워크는 일반 옵션으로 만듭니다(`sbox.driver`가 없어도 `sbox.wg.overlay`나
+`sbox.wg.overlay.file`이 있으면 `wg-overlay` 드라이버). 주소는 Docker IPAM이 이 호스트 대역(`--ip-range`)에서,
+게이트웨이는 이 호스트 대역의 첫 주소(`--gateway`)로 줍니다.
+
+```sh
+# /etc/sbox/ov.json: {"privateKey":"<sbox-wg genkey>","hostSubnet":"10.210.1.0/24","listenPort":51820,
+#                     "peers":[{"name":"host-b","publicKey":"...","endpoint":"192.0.2.2:51820","subnet":"10.210.2.0/24"}]}
+docker network create -d sboxnet --subnet 10.210.0.0/16 --ip-range 10.210.1.0/24 --gateway 10.210.1.1 \
+    -o sbox.wg.overlay.file=/etc/sbox/ov.json ov
+docker run --rm --network ov alpine ping -c1 10.210.2.2       # 다른 호스트의 컨테이너
+```
+
+Docker 없이 같은 상태를 다루는 일회성 명령도 있습니다(같은 드라이버 등록, 같은 잠금).
+
+```sh
+sboxnet [--state-dir DIR] [--host-netns PATH] network create [-d DRIVER] [--subnet CIDR [--gateway IP] [--ip-range CIDR]]...
+        [--internal] [--ipv6] [-o KEY=VALUE]... [--label KEY=VALUE]... NAME     # 네트워크 ID 출력
+sboxnet network ls [-q]
+sboxnet network inspect NAME...                                                # SNetwork JSON 배열
+sboxnet network rm NAME...                                                     # 엔드포인트가 있으면 실패
+```
+
+설정 형식과 실행 중 호스트 추가는 [vpn-wg.md](vpn-wg.md)를 보십시오. 개인 키는 드라이버의 0600 상태 파일로
+옮겨지고 네트워크 객체(Docker `network inspect`의 옵션)에는 남지 않습니다.
 
 ### 신호와 종료
 
@@ -345,6 +380,7 @@ FS_IOC_FSSETXATTR)`, `quotactl_fd(2)`/`quotactl(2)`(`Q_XGETQSTAT`, `Q_XSETQLIM`,
 - `daemons`: 빌드된 `sboxvol` CLI(create/ls/inspect/backup/restore/표준 입출력/prune/rm), `sboxvol serve`를 임시
   소켓에 띄워 프로토콜 흐름 후 SIGTERM으로 정상 종료와 소켓 제거, `sboxnet`을 임시 소켓/상태 디렉터리에 띄워
   `/Plugin.Activate`, `/NetworkDriver.GetCapabilities`, `/IpamDriver.GetDefaultAddressSpaces` 후 SIGINT 종료.
+  (`sboxnet`의 `wg-overlay` 흐름과 재시작 후 복구는 vpn 모듈의 `vpn_wg_plugin`이 시험합니다.)
 
 ## 제한 사항
 

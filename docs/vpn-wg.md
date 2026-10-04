@@ -228,6 +228,21 @@ co_await mgr.connect("ov", "/var/run/netns/<container>", ep, out);
 co_await drv->addHost(mgr, "ov", host3);     // 실행 중 호스트 추가
 ```
 
+### Docker 플러그인 (`sboxnet`)
+
+`sboxnet` 데몬이 이 드라이버를 등록하고 시작할 때 `restore()`를 부르므로, Docker에서는 일반 옵션으로 만듭니다.
+`sbox.driver`가 없어도 `sbox.wg.overlay`(JSON 텍스트)나 `sbox.wg.overlay.file`(파일 경로)이 있으면 `wg-overlay`가
+골라집니다. Docker의 `--subnet`이 오버레이 전체, `--ip-range`가 이 호스트 대역, `--gateway`가 이 호스트 대역의
+첫 주소(브릿지 주소)입니다. Join 응답의 `StaticRoutes`에 오버레이 전체 경로가 들어갑니다.
+
+```sh
+docker network create -d sboxnet --subnet 10.210.0.0/16 --ip-range 10.210.1.0/24 --gateway 10.210.1.1 \
+    -o sbox.wg.overlay.file=/etc/sbox/ov.json ov
+```
+
+사용자 공간 장치는 데몬의 이벤트 루프에서 돌므로 데몬이 끝나면 터널이 내려가고, 다시 시작하면 복구됩니다
+([vol.md](vol.md)의 `sboxnet`).
+
 ## `sbox-wg`
 
 | 명령 | 동작 |
@@ -241,7 +256,7 @@ co_await drv->addHost(mgr, "ov", host3);     // 실행 중 호스트 추가
 
 ## 테스트
 
-`ctest --test-dir build -L vpn`의 `vpn_wg_*` 8개 실행 파일:
+`ctest --test-dir build -L vpn`의 `vpn_wg_*` 9개 실행 파일:
 
 - `noise`: 독립 구현(Python의 hashlib BLAKE2s, `cryptography`의 X25519/ChaCha20-Poly1305, 별도 HChaCha20)으로
   만든 고정 입력의 알려진 답과 시작/응답 메시지, 전송 키, 첫 데이터 메시지, 쿠키 응답, MAC2를 바이트
@@ -264,6 +279,11 @@ co_await drv->addHost(mgr, "ov", host3);     // 실행 중 호스트 추가
   정리 후 링크와 상태 파일이 남지 않음, 파일 설정과 잘못된 설정 거부, restore.
 - `cli`: `sbox-wg` genkey/pubkey/genpsk/client-config(`--append-to`), netns 안에서 `up`을 띄우고
   `show`/`showconf`로 읽은 뒤 SIGTERM으로 깨끗하게 끝나는지.
+- `plugin`: net의 `CDockerPlugin` 핸들러로 오버레이 네트워크를 만들고(`sbox.wg.overlay`만으로 드라이버 선택,
+  외부 IPAM 주소), CreateEndpoint/Join 응답(게이트웨이, 오버레이 정적 경로), 컨테이너 netns 연결 후 브릿지
+  게이트웨이로 TCP 에코, Leave/DeleteEndpoint/DeleteNetwork 뒤 링크가 남지 않음. 빌드된 `sboxnet`을 임시
+  "호스트" netns(`--host-netns`)에 띄워 HTTP로 오버레이를 만들고, 데몬 종료와 함께 사용자 공간 장치가
+  사라졌다가 재시작한 데몬이 `restore()`로 되살리는지, DeleteNetwork로 지워지는지.
 
 모든 커널 기능 테스트는 루트, netns, `/dev/net/tun`을 먼저 확인하고 없으면 MESSAGE를 남기고 건너뜁니다.
 netns는 `mkdtemp` 디렉터리에 만들고 지웁니다.
@@ -277,7 +297,7 @@ netns는 `mkdtemp` 디렉터리에 만들고 지웁니다.
 - 오버레이 WireGuard 장치는 호스트 netns에만 둡니다(전용 netns 옵션 없음). 사용자 공간 장치는 네트워크를
   만든(또는 `restore()`한) 프로세스의 이벤트 루프에서 돌므로, 그 프로세스(플러그인 데몬 등)가 살아 있어야
   합니다. 일회성 CLI 프로세스로 만든 사용자 공간 오버레이는 그 프로세스가 끝나면 사라지며 `restore()`로
-  다시 띄워야 합니다.
+  다시 띄워야 합니다(`sboxnet`은 시작할 때 자동으로 부름). `sbox-cni`는 이 드라이버를 등록하지 않습니다.
 - NAT와 별개로 호스트의 다른 방화벽(FORWARD 정책 DROP 등)은 건드리지 않습니다.
 - `sbox-wg up`은 wg-quick의 DNS 설정(resolvconf), 기본 경로(`0.0.0.0/0`)용 정책 라우팅(fwmark + 별도 테이블),
   `PreUp`/`PostUp` 훅 실행을 하지 않습니다. `/0` allowed IP는 경로 없이 cryptokey routing에만 쓰입니다.

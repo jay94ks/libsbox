@@ -5,6 +5,7 @@
 // user-space devices live on this daemon's event loop (restored at startup).
 #include <sbox/core/eventloop.hpp>
 #include <sbox/core/file.hpp>
+#include <sbox/core/json.hpp>
 #include <sbox/core/socket.hpp>
 #include <sbox/http/server.hpp>
 #include <sbox/net/docker.hpp>
@@ -14,7 +15,9 @@
 #include <csignal>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <string>
+#include <vector>
 #include <sys/signalfd.h>
 #include <unistd.h>
 
@@ -23,7 +26,8 @@ using namespace sbox;
 namespace {
 
     const char* USAGE =
-        "Usage: sboxnet [OPTIONS]\n"
+        "Usage: sboxnet [OPTIONS]                  serve the plugin\n"
+        "       sboxnet [OPTIONS] network COMMAND  manage networks in the state directory\n"
         "\n"
         "Docker remote network driver and IPAM driver plugin backed by libsbox networking.\n"
         "Register with dockerd by its socket in /run/docker/plugins, then:\n"
@@ -38,7 +42,14 @@ namespace {
         "  --no-firewall      do not program the sbox nftables table\n"
         "  --host-netns PATH  network namespace treated as the host (default: this process's)\n"
         "  --wg-uapi-dir DIR  UAPI sockets of user-space WireGuard devices (default /var/run/wireguard)\n"
-        "  -h, --help         show this help\n";
+        "  -h, --help         show this help\n"
+        "\n"
+        "Network commands (the same state the plugin, sbox-cni and sbox-image bundle --network use):\n"
+        "  network create [-d DRIVER] [--subnet CIDR [--gateway IP] [--ip-range CIDR]]... [--internal]\n"
+        "                 [--ipv6] [-o KEY=VALUE]... [--label KEY=VALUE]... NAME\n"
+        "  network ls [-q]\n"
+        "  network inspect NAME...\n"
+        "  network rm NAME...\n";
 
     /* Prints an error and returns the exit code 1. */
     int failWith(const std::string& message) {
@@ -100,6 +111,176 @@ namespace {
         return false;
     }
 
+    /* Splits "key=value" into a map entry; false without '='. */
+    bool keyValue(const std::string& text, std::map<std::string, std::string>& out) {
+        size_t eq = text.find('=');
+        if (eq == std::string::npos || eq == 0) {
+            return false;
+        }
+
+        out[text.substr(0, eq)] = text.substr(eq + 1);
+        return true;
+    }
+
+    /* Prints JSON to stdout. */
+    void printJson(const CJson& j) {
+        std::string text = j.dump(true);
+        std::fwrite(text.data(), 1, text.size(), stdout);
+        std::fputc('\n', stdout);
+    }
+
+    /* sboxnet network create|ls|inspect|rm. */
+    TTask<int> networkCommand(net::CNetworkManager& manager, std::vector<std::string> args) {
+        if (args.empty()) {
+            co_return failWith("network: a command is required (create, ls, inspect, rm)");
+        }
+
+        std::string cmd = args[0];
+        std::vector<std::string> rest(args.begin() + 1, args.end());
+        auto value = [&](size_t& i, const char* name, std::string& out) {
+            std::string key = name;
+            if (rest[i] == key && i + 1 < rest.size()) {
+                out = rest[++i];
+                return true;
+            }
+
+            if (rest[i].compare(0, key.size() + 1, key + "=") == 0) {
+                out = rest[i].substr(key.size() + 1);
+                return true;
+            }
+
+            return false;
+        };
+
+        if (cmd == "create") {
+            net::SNetworkCreate req;
+            std::string v;
+            for (size_t i = 0; i < rest.size(); ++i) {
+                if (value(i, "--driver", v) || value(i, "-d", v)) {
+                    req.driver = v;
+                } else if (value(i, "--subnet", v)) {
+                    net::SSubnetConfig sc;
+                    if (net::SIpPrefix::parse(v, sc.subnet) != SBOX_OK) {
+                        co_return failWith("network create: invalid --subnet " + v);
+                    }
+
+                    sc.subnet = sc.subnet.network();
+                    req.subnets.push_back(sc);
+                } else if (value(i, "--gateway", v)) {
+                    if (req.subnets.empty() || net::SIpAddress::parse(v, req.subnets.back().gateway) != SBOX_OK) {
+                        co_return failWith("network create: invalid --gateway " + v + " (it follows its --subnet)");
+                    }
+                } else if (value(i, "--ip-range", v)) {
+                    if (req.subnets.empty() || net::SIpPrefix::parse(v, req.subnets.back().ipRange) != SBOX_OK) {
+                        co_return failWith("network create: invalid --ip-range " + v + " (it follows its --subnet)");
+                    }
+                } else if (rest[i] == "--internal") {
+                    req.internal = true;
+                } else if (rest[i] == "--ipv6") {
+                    req.enableIpv6 = true;
+                } else if (value(i, "--opt", v) || value(i, "-o", v)) {
+                    if (!keyValue(v, req.options)) {
+                        co_return failWith("network create: invalid option " + v + " (want KEY=VALUE)");
+                    }
+                } else if (value(i, "--label", v)) {
+                    if (!keyValue(v, req.labels)) {
+                        co_return failWith("network create: invalid label " + v + " (want KEY=VALUE)");
+                    }
+                } else if (!rest[i].empty() && rest[i][0] == '-') {
+                    co_return failWith("network create: unknown option " + rest[i]);
+                } else if (req.name.empty()) {
+                    req.name = rest[i];
+                } else {
+                    co_return failWith("network create: unexpected argument " + rest[i]);
+                }
+            }
+
+            if (req.name.empty()) {
+                co_return failWith("network create: a name is required");
+            }
+
+            // --> Like the plugin: an overlay configuration option names its driver.
+            if (req.driver == "bridge" && (req.options.count(vpn::WG_OVERLAY_OPTION) || req.options.count(vpn::WG_OVERLAY_FILE_OPTION))) {
+                req.driver = vpn::WG_OVERLAY_DRIVER;
+            }
+
+            net::SNetwork out;
+            int32_t r = co_await manager.createNetwork(req, out);
+            if (r != SBOX_OK) {
+                co_return failWith("network create: " + std::string(std::strerror(-r)));
+            }
+
+            std::printf("%s\n", out.id.c_str());
+            co_return 0;
+        }
+
+        if (cmd == "ls" || cmd == "list") {
+            bool quiet = !rest.empty() && (rest[0] == "-q" || rest[0] == "--quiet");
+            std::vector<net::SNetwork> all;
+            int32_t r = co_await manager.listNetworks(all);
+            if (r != SBOX_OK) {
+                co_return failWith("network ls: " + std::string(std::strerror(-r)));
+            }
+
+            if (!quiet) {
+                std::printf("%-14s %-20s %-12s %s\n", "NETWORK ID", "NAME", "DRIVER", "SUBNET");
+            }
+
+            for (const net::SNetwork& n : all) {
+                if (quiet) {
+                    std::printf("%s\n", n.name.c_str());
+                    continue;
+                }
+
+                std::string subnets;
+                for (const net::SNetworkSubnet& sn : n.subnets) {
+                    subnets += (subnets.empty() ? "" : ",") + sn.subnet.toString();
+                }
+
+                std::printf("%-14s %-20s %-12s %s\n", n.id.substr(0, 12).c_str(), n.name.c_str(), n.driver.c_str(), subnets.c_str());
+            }
+
+            co_return 0;
+        }
+
+        if (cmd == "inspect" || cmd == "rm" || cmd == "remove") {
+            if (rest.empty()) {
+                co_return failWith("network " + cmd + ": a network name is required");
+            }
+
+            int rc = 0;
+            CJson arr = CJson::array();
+            for (const std::string& name : rest) {
+                if (cmd == "inspect") {
+                    net::SNetwork n;
+                    int32_t r = co_await manager.getNetwork(name, n);
+                    if (r != SBOX_OK) {
+                        rc = failWith("network inspect: " + name + ": " + std::strerror(-r));
+                        continue;
+                    }
+
+                    arr.push(n.toJson());
+                } else {
+                    int32_t r = co_await manager.deleteNetwork(name);
+                    if (r != SBOX_OK) {
+                        rc = failWith("network rm: " + name + ": " + (r == -EBUSY ? std::string("network has active endpoints") : std::string(std::strerror(-r))));
+                        continue;
+                    }
+
+                    std::printf("%s\n", name.c_str());
+                }
+            }
+
+            if (cmd == "inspect") {
+                printJson(arr);
+            }
+
+            co_return rc;
+        }
+
+        co_return failWith("network: unknown command " + cmd);
+    }
+
 }
 
 int main(int argc, char** argv) {
@@ -150,6 +331,18 @@ int main(int argc, char** argv) {
             }
 
             continue;
+        }
+
+        if (arg == "network") {
+            // --> One-shot management command over the same state directory.
+            std::vector<std::string> rest(argv + i + 1, argv + argc);
+            CFile::makeDirs(options.stateDir, 0700);
+            std::signal(SIGPIPE, SIG_IGN);
+            CEventLoop loop;
+            net::CNetworkManager manager(options);
+            auto overlay = std::make_shared<vpn::CWgOverlayDriver>(overlayOptions);
+            manager.registerDriver(overlay);
+            return loop.run(networkCommand(manager, rest));
         }
 
         return failWith("unknown argument " + arg + " (see --help)");

@@ -363,7 +363,7 @@ pull [--no-unpack] IMAGE                  push [--chunk-size N] IMAGE [TARGET]
 images|ls [--digests]                     inspect IMAGE...          tag SOURCE TARGET
 rmi [-f] IMAGE...                         save [-o FILE] [--format docker|oci] IMAGE...
 load [-i FILE] [--name NAME]              bundle [옵션] IMAGE DIR [-- ARGS...]
-mount [--id ID] IMAGE [TARGET]            umount ID      rm ID      ps
+mount [--id ID] IMAGE [TARGET]            umount ID      rm [-v] ID      ps
 commit [--author A] [--message M] ID [IMAGE]                        prune [-a] [--dry-run]
 tags REPOSITORY                           snapshots
 ```
@@ -373,6 +373,23 @@ tags REPOSITORY                           snapshots
 - `--json`은 각 명령의 결과를 JSON으로 출력합니다. `inspect`는 항상 `docker inspect`와 비슷한 JSON입니다.
 - `bundle` 옵션: `--user`, `--hostname`, `--entrypoint`, `--env K=V`, `--cap-add`, `--cap-drop`, `--workdir`, `--tty`,
   `--read-only`, `--rootless`(권한 없는 실행자면 자동), `--no-seccomp`, `--no-new-privileges`, `--` 뒤는 Cmd.
+- `bundle`의 볼륨과 네트워크 옵션(도구 `cli/sbox-image`가 vol, net 모듈을 함께 링크해 연결합니다. image
+  라이브러리는 두 모듈에 의존하지 않습니다):
+  - `-v/--volume [SRC:]DST[:OPTS]`, `--mount type=volume|bind|tmpfs,...`, `--tmpfs DST[:OPTS]`: docker run과 같은
+    문법(`vol::ParseVolumeFlag`/`ParseMountFlag`/`ParseTmpfsFlag`). 컨테이너 루트를 만든 뒤
+    `vol::PrepareContainerMounts`(볼륨 생성, 익명 볼륨, 사용자 등록, 이미지 내용 copy-up, bind 검증)로 바꿔
+    config.json `mounts` 끝에 붙입니다. 볼륨 저장소는 `--volume-root DIR`(기본 `vol::DefaultVolumeRoot()`).
+  - `--network NAME [-p/--publish [IP:]HOST:CTR[/PROTO]]...`: 컨테이너 루트 ID 이름의 netns를
+    `--netns-dir DIR`(기본 `/var/run/netns`)에 만들고 `net::CNetworkManager::connect`로 네트워크에 붙인 뒤
+    config.json의 network 네임스페이스 경로로 넣습니다. 상태 디렉터리는 `--net-state-dir`(기본
+    `net::DefaultNetworkStateDir()`). HOST 0은 임시 포트이며 `--json` 출력의 `Network.Ports`에 실제 값이
+    나옵니다. 루트(초기 사용자 네임스페이스의 CAP_NET_ADMIN)가 필요하고 rootless 번들에는 쓸 수 없습니다.
+  - `--netns PATH`: 이미 있는 netns를 config.json에 넣기만 합니다(정리하지 않음). `--network`와 함께 쓸 수 없습니다.
+  - 붙인 것은 `<root>/attachments/<ID>.json`(0600)에 기록합니다. 도중에 실패하면 그때까지 한 일(연결, netns,
+    볼륨 사용자)과 컨테이너 루트, config.json을 되돌립니다.
+  - `--json` 출력에 `Volumes`(획득한 볼륨 이름), `Netns`, `Network`(`Name`, `Address`, `Ports`)가 더해집니다.
+- `rm [-v] ID`: 기록이 있으면 먼저 네트워크 연결을 끊고(`disconnect`) netns를 지우고 볼륨 사용자를 놓은
+  뒤(`releaseUser`, `-v`면 익명 볼륨 삭제) 컨테이너 루트를 지웁니다.
 - `save`는 터미널로 쓰지 않으며 `load`도 터미널에서 읽지 않습니다(Docker와 같음).
 
 ## 9. 사용하는 커널 인터페이스

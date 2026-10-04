@@ -65,6 +65,7 @@ CLI 도구를 빌드하지 않았으면(`SBOX_BUILD_CLI=OFF`) 각 케이스가 `
 | `e2e_vol_oci` | `-v e2edata:/data`, `--mount type=bind,...,readonly`, `--tmpfs /scratch:size=1m`을 `ParseVolumeFlag`/`ParseMountFlag`/`ParseTmpfsFlag` → `PrepareContainerMounts` → config.json `mounts`에 추가. 컨테이너 1: copy-up된 이미지 내용, 볼륨 쓰기, bind 읽기와 쓰기 거부, tmpfs 크기 제한. 볼륨 사용자 등록/해제. 컨테이너 2(`sbox run`, `:ro`): 이전 데이터와 쓰기 거부. `BackupVolumeToFile` → `remove` → `RestoreVolumeFromFile`(새 이름) → 컨테이너 3이 복원 데이터를 읽음. `sboxvol backup` → `sboxvol restore ... -`(표준 입력, 라벨). 익명 볼륨이 `releaseUser(.., true)`로 지워짐 |
 | `e2e_net_oci` | 임시 호스트 netns의 `CNetworkManager`로 브릿지 네트워크(10.123.0.0/24) 생성, 컨테이너 netns 3개를 `connect`(첫째는 `0:8080/tcp` 포트 매핑, 임시 호스트 포트). config.json의 network 경로로 들어간 컨테이너 1이 서버, 컨테이너 2가 TCP로 받음, 호스트 netns에서 브릿지 주소와 127.0.0.1의 매핑 포트로 받음, `EBNET_NAMESPACE` CSandbox가 셋째 netns에서 받음. `disconnect`한 netns는 더 이상 닿지 않음. 네트워크와 netns 삭제 |
 | `e2e_cni_oci` | 빌드된 `sbox-cni`를 임시 호스트 netns에서 ADD(브릿지, `ipam` 범위, `runtimeConfig.portMappings`) → 결과의 ips/interfaces. 그 netns에 들어간 컨테이너의 `/sys/class/net`이 `eth0 lo`이고 MAC이 CNI 결과와 같음. `sbox run --detach`로 띄운 서버에 컨테이너 주소와 매핑 포트(10.124.0.1:18080)로 접속, `state`가 stopped가 되면 `delete`. CHECK 성공, DEL 뒤 `lo`만 남음, DEL 재실행도 성공 |
+| `e2e_bundle_attach` | 임시 호스트 netns에 브릿지 네트워크(10.125.0.0/24)를 만들고, 그 netns 안에서 `sbox-image bundle -v e2edata:/data -v /anon --tmpfs /scratch:size=1m --network e2eattach --publish 0:8080/tcp ...` → `--json` 출력(Id, Netns, 주소, 임시 호스트 포트, 볼륨 2개), config.json의 network 경로와 mounts. `sbox run --detach`로 띄운 서버에 호스트 netns에서 컨테이너 주소와 127.0.0.1의 게시 포트로 접속, 정지 후 delete. 이름 있는 볼륨에 copy-up된 `seed.txt`와 컨테이너가 쓴 파일, 사용자 기록. `sbox-image rm -v` 뒤 엔드포인트 없음, netns 파일 없음, 볼륨 사용자 없음, 익명 볼륨 삭제, `ps`가 빔. `--netns`(기존 netns, `rm`이 건드리지 않음), `--publish`만 준 경우와 없는 네트워크는 실패하고 번들·루트·netns가 남지 않음 |
 | `e2e_readme` | README.md의 C++ 예제를 그대로 컴파일한 프로그램을 실행합니다. 이 테스트의 마운트 네임스페이스에서 `/srv`에 tmpfs를 올리고 `/srv/job`에 임시 디렉터리를 bind한 뒤, 표준 입력의 수를 더해 `/work/result.txt`에 쓰고 그 합으로 끝나는 `main.py`(python3이 없으면 sh 스크립트, 예제의 인터프리터도 `/bin/sh`로 바뀜)를 둡니다. 종료 코드 3과 결과 파일을 확인합니다 |
 | `e2e_hostile` | `SBoxPolicy::strict()` + 보조 프로그램 디렉터리. 마운트 밖 호스트 파일(절대 경로, `/etc/shadow`, `/proc/1/root/...`, `/sbx/../../..`) 읽기 → ENOENT/EACCES. 읽기 전용 마운트 쓰기 → EROFS. `/proc`의 pid는 `1 2`뿐. 호스트 127.0.0.1의 리스너 → ECONNREFUSED(자기 루프백), 192.0.2.1 → ENETUNREACH, 리스너는 연결을 받지 않음. 포크 폭탄(`pidsMax` 16) → fork가 EAGAIN, 16개 미만. `memoryMax` 64 MiB에서 512 MiB → `EBEXIT_MEMORY`, `oomKills > 0`. `ptrace`/`mount`/`unshare`/`setns`/`bpf`/`keyctl` → `EBEXIT_SECCOMP`(SIGSYS), errno 프로필에서는 EPERM. CPU 소모 → `EBEXIT_CPU_TIME`(`cpuTimeLimitMs` 1000), 벽시계 → `EBEXIT_WALL_TIMEOUT` |
 
@@ -75,26 +76,13 @@ CLI 도구를 빌드하지 않았으면(`SBOX_BUILD_CLI=OFF`) 각 케이스가 `
 | README 예제가 컴파일되지 않음: `sandbox.hpp`만 포함하면 `CEventLoop`가 없음 | `include/sbox/box/sandbox.hpp`가 `core/eventloop.hpp`를 포함(회귀 테스트 `box_header`) |
 | `SIGPIPE`를 무시하지 않은 호출자가 샌드박스 표준 입력에 쓰다가 죽음(샌드박스 프로그램이 먼저 끝나거나 stdin을 닫으면). 악성 프로그램이 감독 프로세스를 죽일 수 있음 | `CStream::send`가 파이프에도 SIGPIPE를 일으키지 않고 `-EPIPE`(`modules/core/src/stream.cpp`, 회귀 테스트 `core_stream`) |
 | merged-/usr 호스트(`/lib64 -> usr/lib64`)에서 `/usr`만 bind한 정책(README와 architecture.md 예제)은 동적 링크 프로그램을 실행하지 못함(로더 `/lib64/ld-linux-x86-64.so.2` 없음, `execve` ENOENT) | 정책이 호스트 `/usr`를 bind하고 그 경로를 직접 마운트하지 않으면 `/bin`, `/sbin`, `/lib*`를 `/usr` 안에서 읽기 전용으로 bind(`modules/box/src/sandbox.cpp`, 회귀 테스트 `box_sandbox`의 merged-/usr 케이스) |
+| README 예제가 쓰인 그대로는 동작하지 않음: `p.cwd`가 없어 `main.py`를 루트에서 찾고, `/etc`를 마운트하지 않아 `/usr/bin/python3 -> /etc/alternatives/python3`인 호스트에서 실행 파일이 보이지 않음 | README 예제가 `SBoxPolicy::strict()` + `systemMounts()` + `p.cwd = "/work"`를 씀(`e2e_readme`) |
 
 ## 제한 사항과 남은 문제
 
-- **README 예제는 쓰인 그대로는 동작하지 않습니다**(`e2e_readme` 실패). 남은 원인은 문서입니다.
-  `p.cwd`를 정하지 않아 `python3 main.py`가 샌드박스 루트(`/main.py`)를 찾고, `/etc`를 마운트하지 않아
-  `/usr/bin/python3 -> /etc/alternatives/python3`인 호스트(이 기계)에서는 프로그램이 보이지 않습니다
-  (`EBEXIT_SETUP_FAILURE`, `execve` ENOENT. 예제는 `exitCode`만 돌려주므로 0). 다음처럼 고치면 이
-  테스트가 통과합니다(이 기계에서 확인).
-  ```cpp
-  SBoxPolicy p = SBoxPolicy::strict();
-  p.mounts = SBoxPolicy::systemMounts();                         // /usr, /bin, /lib*, /etc (읽기 전용)
-  p.mounts.push_back({ "/srv/job", "/work", EBMNT_READ_WRITE });
-  p.cwd = "/work";
-  ```
-- `sbox`/`sbox-image bundle` 명령줄에는 `-v`/`--mount`/`--tmpfs`와 네트워크 연결 옵션이 없습니다. 볼륨과
-  네트워크는 라이브러리(`PrepareContainerMounts`, `CNetworkManager::connect`) 또는 config.json 편집,
-  `sbox-cni`로 붙입니다([usage.md](usage.md)).
-- WireGuard 오버레이(`wg-overlay` 드라이버)는 라이브러리로만 만들 수 있습니다. `sboxnet`(Docker 플러그인)과
-  `sbox-cni`는 그 드라이버를 등록하지 않으므로 이 테스트에는 오버레이 시나리오가 없습니다(vpn 모듈의
-  `vpn_wg_overlay` 테스트가 다룸).
+- WireGuard 오버레이(`wg-overlay` 드라이버)는 이 테스트에 없습니다. 라이브러리 경로는 vpn 모듈의
+  `vpn_wg_overlay`, `sboxnet`(Docker 플러그인) 경로는 `vpn_wg_plugin`이 다룹니다. `sbox-cni`는 이 드라이버를
+  등록하지 않습니다.
 - Docker/containerd에 `sboxrun`을 등록한 시나리오는 oci 모듈의 `oci_docker`(`SBOX_TEST_DOCKER=1`)에 있고
   여기서는 반복하지 않습니다.
 - IPv6, macvlan/DHCP, NFS 볼륨, 프로젝트 쿼터는 각 모듈 테스트가 다루며 이 환경(커널 설정) 때문에 e2e에는
