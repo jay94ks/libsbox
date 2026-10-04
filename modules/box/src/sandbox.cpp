@@ -106,6 +106,57 @@ namespace sbox {
             return m;
         }
 
+        /*
+         * Merged-/usr hosts: binding the host /usr also provides /bin, /sbin, /lib* where the
+         * host has them as links into usr/ (and the policy does not mount them itself).
+         */
+        void addMergedUsrLinks(const SBoxPolicy& p, std::vector<SMountSpec>& mounts) {
+            const SBoxMount* usr = nullptr;
+            for (const SBoxMount& m : p.mounts) {
+                if (m.source == "/usr" && m.target == "/usr") {
+                    usr = &m;
+                }
+            }
+
+            if (!usr) {
+                return;
+            }
+
+            for (const char* dir : { "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/libx32" }) {
+                bool taken = std::any_of(p.mounts.begin(), p.mounts.end(), [dir](const SBoxMount& m) { return m.target == dir; });
+                struct stat st;
+                char link[256];
+                if (taken || ::lstat(dir, &st) != 0 || !S_ISLNK(st.st_mode)) {
+                    continue;
+                }
+
+                ssize_t n = ::readlink(dir, link, sizeof(link) - 1);
+                if (n <= 0) {
+                    continue;
+                }
+
+                // --> "usr/lib64" or "/usr/lib64"; anything else is not covered by the /usr bind.
+                std::string target(link, size_t(n));
+                if (target.compare(0, 4, "usr/") == 0) {
+                    target = "/" + target;
+                }
+
+                if (target.compare(0, 5, "/usr/") != 0 || target.find("..") != std::string::npos ||
+                    ::stat(target.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) {
+                    continue;
+                }
+
+                // --> The program loader (/lib64/ld-linux-x86-64.so.2) and #! lines (/bin/sh)
+                // use these paths; they expose nothing beyond the /usr bind itself.
+                SMountSpec b;
+                b.source = target;
+                b.destination = dir;
+                b.flags = MS_BIND | MS_REC | MS_NOSUID | MS_NODEV | MS_RDONLY | (usr->noexec ? MS_NOEXEC : 0);
+                b.recursiveReadOnly = true;
+                mounts.push_back(b);
+            }
+        }
+
         /**
          * OCI's default masked paths (Docker's list).
          */
@@ -266,6 +317,8 @@ namespace sbox {
                 b.optional = m.optional;
                 mounts.push_back(b);
             }
+
+            addMergedUsrLinks(p, mounts);
 
             SMountSpec proc;
             proc.source = "proc";

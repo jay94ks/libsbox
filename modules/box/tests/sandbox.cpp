@@ -196,6 +196,29 @@ TEST_CASE("the documented example runs python with stdin and a writable job dire
     CFile::removeTree(job);
 }
 
+TEST_CASE("binding only /usr on a merged-/usr host still runs dynamically linked programs") {
+    struct stat st;
+    if (!canRun() || ::lstat("/lib64", &st) != 0 || !S_ISLNK(st.st_mode)) {
+        MESSAGE("not a merged-/usr host with /lib64 -> usr/lib64; skipping");
+        return;
+    }
+
+    // --> Regression (README example): /lib64/ld-linux-x86-64.so.2 must resolve when only /usr is bound.
+    SBoxPolicy p;
+    p.mounts = { { "/usr", "/usr", EBMNT_READ_ONLY } };
+    SOutcome o = run(p, { "/usr/bin/sh", "-c", "echo merged; /bin/true && ls -d /lib64" });
+    CHECK_MESSAGE(o.result.reason == EBEXIT_NORMAL, o.err, " ", o.result.failedStep, " ", o.result.error);
+    CHECK(o.result.exitCode == 0);
+    CHECK(o.out == "merged\n/lib64\n");
+
+    // --> A policy that mounts the path itself keeps its own mount.
+    std::string dir = makeTempDir(0755);
+    p.mounts.push_back({ dir, "/bin", EBMNT_READ_ONLY });
+    o = run(p, { "/usr/bin/sh", "-c", "ls /bin | wc -l" });
+    CHECK(o.out == "0\n");
+    CFile::removeTree(dir);
+}
+
 TEST_CASE("exit codes, stdout and stderr") {
     if (!canRun()) {
         return;
