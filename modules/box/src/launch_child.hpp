@@ -193,6 +193,7 @@ namespace sbox {
         uint16_t rows = 0;
         uint16_t columns = 0;
         bool newSession = true;
+        int umask = -1;
         const std::function<int32_t()>* function = nullptr;
 
         /**

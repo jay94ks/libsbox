@@ -397,14 +397,15 @@ TEST_CASE("launch writes sysctls and rlimits") {
         return;
     }
 
-    SLaunchSpec spec = baseSpec({ "/bin/sh", "-c", "cat /proc/sys/net/ipv4/ip_forward; ulimit -n" });
+    SLaunchSpec spec = baseSpec({ "/bin/sh", "-c", "cat /proc/sys/net/ipv4/ip_forward; ulimit -n; umask" });
     spec.sysctls = { { "net.ipv4.ip_forward", "1" } };
     spec.rlimits = { SRlimit{ RLIMIT_NOFILE, 77, 77 } };
+    spec.umask = 027;
 
     CEventLoop loop;
     SRun r = loop.run(run(spec));
     REQUIRE_MESSAGE(r.spawn == SBOX_OK, r.step);
-    CHECK(r.out == "1\n77\n");
+    CHECK(r.out == "1\n77\n0027\n");
 }
 
 TEST_CASE("launch without a user namespace creates device nodes with mknod (root)") {

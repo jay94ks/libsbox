@@ -1333,6 +1333,10 @@ namespace sbox {
 
         setupIdentity(p);
 
+        if (p.umask >= 0) {
+            ::umask(mode_t(p.umask));
+        }
+
         if (p.cwd && ::chdir(p.cwd) != 0) {
             fail(STEP_CHDIR, -1, errno);
         }

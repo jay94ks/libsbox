@@ -140,6 +140,7 @@ namespace sbox {
         uint32_t gid = 0;
         std::vector<uint32_t> additionalGids;
         bool newSession = true;                 // --> setsid() so the process leads its own group.
+        std::optional<uint32_t> umask;          // --> File mode creation mask for the process.
 
         // Namespaces and identity.
         std::vector<SNamespaceSpec> namespaces;

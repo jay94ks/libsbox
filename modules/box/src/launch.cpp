@@ -418,6 +418,7 @@ namespace sbox {
             p.rows = spec.terminalRows;
             p.columns = spec.terminalColumns;
             p.newSession = spec.newSession || spec.terminal;
+            p.umask = spec.umask ? int(*spec.umask & 0777) : -1;
             p.function = spec.function ? &spec.function : nullptr;
 
             return SBOX_OK;
