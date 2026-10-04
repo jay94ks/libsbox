@@ -6,6 +6,7 @@
 #include <ctime>
 #include <cstring>
 #include <dirent.h>
+#include <set>
 #include <fcntl.h>
 #include <sys/random.h>
 #include <sys/stat.h>
@@ -265,32 +266,46 @@ namespace image {
         return SBOX_OK;
     }
 
+    namespace {
+
+        /* Sums regular file sizes, counting hard-linked inodes once. */
+        uint64_t treeSize(const std::string& path, std::set<std::pair<dev_t, ino_t>>& seen) {
+            struct stat st{};
+            if (::lstat(path.c_str(), &st) != 0) {
+                return 0;
+            }
+
+            if (S_ISREG(st.st_mode)) {
+                if (st.st_nlink > 1 && !seen.insert({ st.st_dev, st.st_ino }).second) {
+                    return 0;
+                }
+
+                return uint64_t(st.st_size);
+            }
+
+            if (!S_ISDIR(st.st_mode)) {
+                return 0;
+            }
+
+            std::vector<std::string> names;
+            if (ListDirectory(path, names) != SBOX_OK) {
+                return 0;
+            }
+
+            uint64_t total = 0;
+            for (const std::string& n : names) {
+                total += treeSize(CFile::join(path, n), seen);
+            }
+
+            return total;
+        }
+
+    }
+
     /* Returns the size of the regular files in a tree. */
     uint64_t TreeSize(const std::string& path) {
-        struct stat st{};
-        if (::lstat(path.c_str(), &st) != 0) {
-            return 0;
-        }
-
-        if (S_ISREG(st.st_mode)) {
-            return uint64_t(st.st_size);
-        }
-
-        if (!S_ISDIR(st.st_mode)) {
-            return 0;
-        }
-
-        std::vector<std::string> names;
-        if (ListDirectory(path, names) != SBOX_OK) {
-            return 0;
-        }
-
-        uint64_t total = 0;
-        for (const std::string& n : names) {
-            total += TreeSize(CFile::join(path, n));
-        }
-
-        return total;
+        std::set<std::pair<dev_t, ino_t>> seen;
+        return treeSize(path, seen);
     }
 
     /* Returns true for root in the initial user namespace. */
