@@ -473,6 +473,10 @@ namespace oci {
         std::string dir;
         if (slice != "-.slice") {
             std::string stem = slice.substr(0, slice.size() - 6);
+            if (stem.empty() || stem.front() == '-' || stem.back() == '-' || stem.find("--") != std::string::npos) {
+                return -EINVAL;
+            }
+
             size_t pos = 0;
             while (true) {
                 size_t dash = stem.find('-', pos);

@@ -145,8 +145,10 @@ namespace oci {
 
             if (v.type() == EJSON_DOUBLE) {
                 float64_t d = v.asDouble();
-                if (std::isfinite(d) && std::floor(d) == d && d >= 0 && d < 18446744073709551616.0) {
-                    out = uint64_t(d);
+                if (std::isfinite(d) && std::floor(d) == d && d >= 0 && d <= 18446744073709551616.0) {
+                    // --> Values near 2^64 arrive rounded up to 2^64 (doubles): that is UINT64_MAX
+                    // (RLIMIT_INFINITY, all-ones masks).
+                    out = d >= 18446744073709551615.0 ? ~uint64_t(0) : uint64_t(d);
                     return true;
                 }
             }
