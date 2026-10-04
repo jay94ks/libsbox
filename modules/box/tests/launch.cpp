@@ -11,6 +11,9 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <cstring>
+#include <sys/prctl.h>
+#include <sys/syscall.h>
+#include <sys/wait.h>
 
 using namespace sbox;
 using namespace testutil;
@@ -312,6 +315,61 @@ TEST_CASE("launch joins the namespaces of a running process") {
         // processes are visible.
         CHECK(r.out.find("\n1\n") == std::string::npos);
 
+        in.close();
+        SExitStatus st;
+        CHECK(co_await a.wait(st) == SBOX_OK);
+    }());
+}
+
+TEST_CASE("launch orphans the payload of an early fork (OCI exec --detach)") {
+    if (!canRun()) {
+        return;
+    }
+
+    CEventLoop loop;
+    loop.run([]() -> TTask<void> {
+        SLaunchSpec first = baseSpec({ "/bin/sh", "-c", "read x" });
+        CStream in;
+        CFd inChild;
+        REQUIRE(CPipe::createForChild(in, inChild, false) == SBOX_OK);
+        first.fds.push_back({ inChild.get(), 0 });
+
+        CProcess a;
+        REQUIRE(co_await CProcess::spawn(first, a) == SBOX_OK);
+        inChild.reset();
+
+        // --> The orphaned payload is reparented to us only while we are a subreaper.
+        REQUIRE(::prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) == 0);
+
+        std::string base = "/proc/" + std::to_string(a.pid()) + "/ns/";
+        SLaunchSpec second;
+        second.args = { "/bin/sh", "-c", "exit 7" };
+        second.env = { "PATH=/usr/bin:/bin" };
+        second.orphanPayload = true;
+        second.namespaces = {
+            { ENS_USER, base + "user" }, { ENS_PID, base + "pid" }, { ENS_MOUNT, base + "mnt" },
+        };
+
+        CProcess b;
+        REQUIRE(co_await CProcess::spawn(second, b) == SBOX_OK);
+        CHECK(b.payloadPid() != b.pid());
+
+        // --> The outer process exits on its own right after the fork.
+        SExitStatus outer;
+        REQUIRE(co_await b.wait(outer, 10000) == SBOX_OK);
+        CHECK(outer.exited);
+        CHECK(outer.exitCode == 0);
+
+        // --> The payload is now our child: wait for it through its own pidfd.
+        CFd pidfd(int(::syscall(SYS_pidfd_open, b.payloadPid(), 0)));
+        REQUIRE(pidfd.isValid());
+        CHECK(co_await CEventLoop::current()->waitFd(pidfd.get(), EFDE_READ, 10000) > 0);
+        siginfo_t si{};
+        CHECK(::waitid(P_PIDFD, id_t(pidfd.get()), &si, WEXITED | __WALL) == 0);
+        CHECK(si.si_code == CLD_EXITED);
+        CHECK(si.si_status == 7);
+
+        ::prctl(PR_SET_CHILD_SUBREAPER, 0, 0, 0, 0);
         in.close();
         SExitStatus st;
         CHECK(co_await a.wait(st) == SBOX_OK);

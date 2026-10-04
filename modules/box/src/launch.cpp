@@ -213,6 +213,7 @@ namespace sbox {
             p.newNetNs = (newNs & ENS_NET) != 0;
             p.newUtsNs = (newNs & ENS_UTS) != 0;
             p.reaper = spec.reaper || bool(spec.function);
+            p.orphanPayload = spec.orphanPayload;
             p.parentDeathSignal = spec.parentDeathSignal;
 
             if (!p.newMountNs && (spec.rootfsMode != ERFS_HOST || !spec.mounts.empty() || !spec.devices.empty() ||

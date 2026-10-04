@@ -56,6 +56,10 @@ rlimit, 사용자 네임스페이스 ID 매핑을 다루고, 그 위에 샌드�
   SIGXCPU가 다르게 동작) 일반 프로세스처럼 죽습니다. reaper는 모든 자식을 거두고, 잡을 수 있는 시그널을
   페이로드에 전달하고, 자신의 capabilities를 모두 버린 뒤, 페이로드의 wait 상태를 보고 파이프로 알리고
   끝납니다. reaper가 끝나면 pid 네임스페이스의 나머지는 커널이 죽입니다.
+- `orphanPayload`: early fork의 바깥 프로세스가 reaper로 남지 않고 페이로드 pid(`PID` 레코드)를 보고한 뒤
+  바로 끝납니다. 페이로드는 가장 가까운 child subreaper(OCI shim, 또는 `PR_SET_CHILD_SUBREAPER`를 켠
+  호출자)에게 입양되며, runc의 `exec`/`create`가 프로세스를 남기는 방식과 같습니다(oci 모듈이 씀). 이때
+  `payloadPid()`는 호출자의 자식이 아닌 페이로드이고 `pid()`/`wait()`는 이미 끝난 바깥 프로세스입니다.
 - 페이로드 fork는 glibc `_Fork`(락과 atfork 처리 없음, 비동기 시그널 안전)를 씁니다. raw clone과 달리
   glibc의 캐시된 tid를 갱신하므로 `function` 페이로드의 `raise`/`abort`가 올바르게 동작합니다.
 - 부모는 시그널을 모두 막은 채 clone3를 부르고, 자식은 처음에 모든 시그널 처리기를 기본값으로 되돌린 뒤
