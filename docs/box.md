@@ -364,7 +364,9 @@ SBoxResult r = co_await box.wait();
 자원 수치(`cpuSource`, `memorySource`):
 
 - CPU 시간: cgroup이 있으면 cgroup(v1 `cpuacct`, 아니면 v2 `cpu.stat`)의 사용량으로, 샌드박스의 모든
-  프로세스(거두지 않은 것 포함)를 셉니다. 없으면 waitid rusage(거둔 프로세스만)입니다.
+  프로세스(거두지 않은 것 포함)를 셉니다. 없으면 waitid rusage(거둔 프로세스만)입니다. 커널은
+  `RLIMIT_CPU`를 틱 단위로 샘플링한 user+system 시간으로 검사하므로, CPU를 다투는 기계에서는
+  `EBEXIT_CPU_TIME`으로 끝난 실행의 `cpuTimeUs`(정확한 실행 시간)가 한도보다 10~20% 작을 수 있습니다.
 - 최대 메모리: cgroup 메모리 컨트롤러가 있으면 `memory.peak`/`max_usage_in_bytes`(페이지 캐시와 `/tmp`
   tmpfs 포함, 즉 메모리 제한이 실제로 재는 값)이고, 없으면 rusage `ru_maxrss`(가장 큰 단일 프로세스의 RSS)입니다.
 - `wallTimeMs`는 spawn 시작부터 종료 확인까지입니다.
