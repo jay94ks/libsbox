@@ -31,33 +31,6 @@ namespace {
         return a;
     }
 
-    /* Blocking TCP connect + send used inside a forked child (CNetns::run). */
-    int32_t blockingConnect(const char* address, uint16_t port, const char* payload) {
-        int fd = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
-        if (fd < 0) {
-            return -errno;
-        }
-
-        timeval tv{ 5, 0 };
-        ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-
-        sockaddr_in sa;
-        std::memset(&sa, 0, sizeof(sa));
-        sa.sin_family = AF_INET;
-        sa.sin_port = htons(port);
-        ::inet_pton(AF_INET, address, &sa.sin_addr);
-
-        if (::connect(fd, reinterpret_cast<sockaddr*>(&sa), sizeof(sa)) < 0) {
-            int32_t err = -errno;
-            ::close(fd);
-            return err;
-        }
-
-        ssize_t n = ::send(fd, payload, std::strlen(payload), MSG_NOSIGNAL);
-        ::close(fd);
-        return n == ssize_t(std::strlen(payload)) ? 0 : -EIO;
-    }
-
 }
 
 TEST_CASE("bridge, veth, addresses, routes and TCP across the veth inside test namespaces") {
@@ -202,7 +175,7 @@ TEST_CASE("bridge, veth, addresses, routes and TCP across the veth inside test n
         }(&listener, &received, &accepted));
 
         int32_t child = co_await CNetns::run(ctrNs, [port]() {
-            return blockingConnect("10.200.0.1", port, "hello-veth");
+            return nettest::blockingConnect("10.200.0.1", port, "hello-veth");
         });
 
         CHECK(child == 0);

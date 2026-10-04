@@ -3,7 +3,12 @@
 
 #include <sbox/core/file.hpp>
 #include <sbox/net/netns.hpp>
+#include <arpa/inet.h>
+#include <cerrno>
 #include <cstdlib>
+#include <cstring>
+#include <netinet/in.h>
+#include <sys/socket.h>
 #include <string>
 #include <vector>
 #include <unistd.h>
@@ -50,6 +55,36 @@ namespace nettest {
             return p;
         }
     };
+
+    /**
+     * Blocking TCP connect + send, for use inside a forked child (CNetns::run).
+     * @return 0 on success or a negated errno.
+     */
+    inline int32_t blockingConnect(const char* address, uint16_t port, const char* payload, int32_t timeoutSec = 3) {
+        int fd = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        if (fd < 0) {
+            return -errno;
+        }
+
+        timeval tv{ timeoutSec, 0 };
+        ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+        sockaddr_in sa;
+        std::memset(&sa, 0, sizeof(sa));
+        sa.sin_family = AF_INET;
+        sa.sin_port = htons(port);
+        ::inet_pton(AF_INET, address, &sa.sin_addr);
+
+        if (::connect(fd, reinterpret_cast<sockaddr*>(&sa), sizeof(sa)) < 0) {
+            int32_t err = -errno;
+            ::close(fd);
+            return err;
+        }
+
+        ssize_t n = ::send(fd, payload, std::strlen(payload), MSG_NOSIGNAL);
+        ::close(fd);
+        return n == ssize_t(std::strlen(payload)) ? 0 : -EIO;
+    }
 
     /**
      * Returns true when the kernel has IPv6 (not booted with ipv6.disable=1).
