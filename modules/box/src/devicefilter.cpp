@@ -94,6 +94,7 @@ namespace sbox {
         e.loadCtx(BPF_REG_5, 8);
 
         // --> Last match wins: test the rules from the end; the first hit returns.
+        bool unconditional = false;
         for (size_t i = rules.size(); i-- > 0;) {
             const SCgroupDeviceRule& r = rules[i];
             std::vector<size_t> toNext;
@@ -123,6 +124,13 @@ namespace sbox {
             e.emit(BPF_ALU64 | BPF_MOV | BPF_K, BPF_REG_0, 0, 0, r.allow ? 1 : 0);
             e.emit(BPF_JMP | BPF_EXIT, 0, 0, 0, 0);
 
+            if (toNext.empty()) {
+                // --> Unconditional: earlier rules can never be reached (and the verifier
+                // rejects unreachable instructions).
+                unconditional = true;
+                break;
+            }
+
             for (size_t at : toNext) {
                 e.patchTo(at, e.code.size());
             }
@@ -130,9 +138,11 @@ namespace sbox {
             // --> r1 was clobbered by the access test; later rules only use r2..r5.
         }
 
-        // --> Nothing matched: allow (the v1 controller's initial state).
-        e.emit(BPF_ALU64 | BPF_MOV | BPF_K, BPF_REG_0, 0, 0, 1);
-        e.emit(BPF_JMP | BPF_EXIT, 0, 0, 0, 0);
+        if (!unconditional) {
+            // --> Nothing matched: allow (the v1 controller's initial state).
+            e.emit(BPF_ALU64 | BPF_MOV | BPF_K, BPF_REG_0, 0, 0, 1);
+            e.emit(BPF_JMP | BPF_EXIT, 0, 0, 0, 0);
+        }
 
         static const char license[] = "Apache-2.0";
         union bpf_attr load;

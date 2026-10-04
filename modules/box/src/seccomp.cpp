@@ -347,7 +347,9 @@ namespace sbox {
                     as.jump(BPF_JEQ, uint32_t(e.nr), target, NEXT);
                 }
 
-                as.jumpAlways(sectionDefault);
+                // --> No match in this block: skip its returns and go on with the next block.
+                int32_t nextBlock = end < entries.size() ? as.label() : sectionDefault;
+                as.jumpAlways(nextBlock);
 
                 for (const auto& [value, id] : rets) {
                     as.bind(id);
@@ -357,6 +359,10 @@ namespace sbox {
                 for (const auto& [id, body] : trampolines) {
                     as.bind(id);
                     as.jumpAlways(body);
+                }
+
+                if (nextBlock != sectionDefault) {
+                    as.bind(nextBlock);
                 }
             }
 
