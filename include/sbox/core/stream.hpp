@@ -109,7 +109,8 @@ namespace sbox {
 
         /**
          * Writes the whole buffer (see IStream::send). Writing to a closed peer is -EPIPE
-         * (SIGPIPE is suppressed for sockets; for pipes the process should ignore SIGPIPE).
+         * and never raises SIGPIPE (MSG_NOSIGNAL for sockets, a briefly blocked and consumed
+         * signal for pipes).
          */
         TTask<SIoResult> send(const SReadOnlyByteSpan& buffer, int64_t timeoutMs = -1) override;
 
