@@ -39,6 +39,48 @@ namespace image {
                        std::string* error) {
             out.clear();
             for (const std::string& want : images) {
+                // --> A bare repository name means every tag of that repository.
+                SReference bare;
+                if (!IsFullHexId(want) && ParseNormalizedReference(want, bare) == SBOX_OK && !bare.hasTag() && !bare.hasDigest()) {
+                    std::vector<SImageInfo> all;
+                    store.listImages(all);
+                    bool any = false;
+                    for (const SImageInfo& i : all) {
+                        std::vector<std::string> names;
+                        for (const std::string& t : i.repoTags) {
+                            SReference tr;
+                            if (SReference::parse(t, tr) == SBOX_OK && tr.name() == bare.name()) {
+                                names.push_back(t);
+                            }
+                        }
+
+                        if (names.empty()) {
+                            continue;
+                        }
+
+                        any = true;
+                        Selected* existing = nullptr;
+                        for (Selected& s : out) {
+                            existing = s.info.id == i.id ? &s : existing;
+                        }
+
+                        if (!existing) {
+                            out.push_back(Selected{ i, {} });
+                            existing = &out.back();
+                        }
+
+                        for (const std::string& n : names) {
+                            if (std::find(existing->names.begin(), existing->names.end(), n) == existing->names.end()) {
+                                existing->names.push_back(n);
+                            }
+                        }
+                    }
+
+                    if (any) {
+                        continue;
+                    }
+                }
+
                 SImageInfo info;
                 int32_t r = store.resolve(want, info);
                 if (r != SBOX_OK) {
@@ -69,22 +111,6 @@ namespace image {
                         std::string full = ref.toString();
                         if (!ref.hasDigest() || includeDigests) {
                             names.push_back(full);
-                        }
-                    } else {
-                        // --> A bare repository: every tag of it.
-                        std::vector<SImageInfo> all;
-                        store.listImages(all);
-                        for (const SImageInfo& i : all) {
-                            if (i.id != info.id) {
-                                continue;
-                            }
-
-                            for (const std::string& t : i.repoTags) {
-                                SReference tr;
-                                if (SReference::parse(t, tr) == SBOX_OK && tr.name() == ref.name()) {
-                                    names.push_back(t);
-                                }
-                            }
                         }
                     }
                 }

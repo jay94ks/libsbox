@@ -393,3 +393,48 @@ TEST_CASE("Docker config.json credentials") {
     CHECK(LoadDockerCredentials(path, "quay.io", a) == -ENOENT);
     CHECK(LoadDockerCredentials(tmp.sub("missing.json"), "quay.io", a) == -ENOENT);
 }
+
+TEST_CASE("end to end: pull, unpack into snapshots, overlay root with whiteouts") {
+    CEventLoop loop;
+    loop.run([]() -> TTask<void> {
+        TempDir tmp;
+        CContentStorePtr store;
+        REQUIRE(CContentStore::open(tmp.sub("store"), store) == SBOX_OK);
+        TestRegistry reg;
+        REQUIRE(reg.start() == SBOX_OK);
+        TestImage img = BuildImage({ { Dir("etc"), File("etc/hostname", "base\n"), File("gone", "x"), Dir("d"), File("d/old", "o") },
+                                     { File(".wh.gone", ""), Dir("d"), File("d/.wh..wh..opq", ""), File("d/new", "n") } });
+        reg.add("e2e/app", "v1", img);
+
+        SRegistryOptions o = testOptions();
+        o.unpack = true;
+        o.snapshotter.rootless = IsRoot() ? 0 : 1;
+        CRegistryClient client(o);
+        SPullResult res;
+        int32_t r = co_await client.pull(*store, reg.domain() + "/e2e/app:v1", res);
+        CAPTURE(client.lastError());
+        REQUIRE(r == SBOX_OK);
+
+        CSnapshotter snap(store, o.snapshotter);
+        for (const std::string& chain : ChainIds(img.diffIds)) {
+            CHECK(snap.hasSnapshot(chain));
+        }
+
+        SContainerInfo c;
+        ESnapshotMode mode = IsRoot() && snap.overlaySupported() ? ESNAP_OVERLAY : ESNAP_COPY;
+        if (mode == ESNAP_COPY) {
+            MESSAGE("overlay part skipped (needs root and overlayfs); checking the copy snapshotter instead");
+        }
+
+        r = snap.prepare("e2e", res.image, mode, c);
+        CAPTURE(snap.lastError());
+        REQUIRE(r == SBOX_OK);
+        CHECK(c.mode == mode);
+        CHECK(ReadText(CFile::join(c.rootfs, "etc/hostname")) == "base\n");
+        CHECK(!CFile::exists(CFile::join(c.rootfs, "gone")));
+        CHECK(!CFile::exists(CFile::join(c.rootfs, "d/old")));
+        CHECK(ReadText(CFile::join(c.rootfs, "d/new")) == "n");
+        REQUIRE(snap.remove("e2e") == SBOX_OK);
+        co_await reg.stop();
+    }());
+}
