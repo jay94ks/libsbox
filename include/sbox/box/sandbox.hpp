@@ -2,6 +2,7 @@
 #define __INCLUDE_SBOX_BOX_SANDBOX_HPP__
 
 #include <sbox/common.hpp>
+#include <sbox/core/eventloop.hpp>
 #include <sbox/core/stream.hpp>
 #include <sbox/core/task.hpp>
 #include <sbox/box/policy.hpp>

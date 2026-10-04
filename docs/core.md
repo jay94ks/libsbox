@@ -34,8 +34,9 @@
 - `IStream`은 `recv`/`send`/`close`와, 그 위의 `recvExact`/`recvAll`을 제공합니다. HTTP, TLS 같은 프로토콜
   코드는 `IStream`만 보고 동작하므로 평문 소켓(`CSocket`)과 TLS 세션을 같은 방식으로 씁니다.
 - `recv`가 0바이트와 `SBOX_OK`를 돌려주면 EOF입니다. pty 마스터의 `EIO`도 EOF로 바꿉니다.
-- `send`는 전체를 보낼 때까지 기다리며, 소켓에는 `MSG_NOSIGNAL`을 씁니다. 파이프에 쓰는 프로그램은
-  `SIGPIPE`를 무시해야 합니다.
+- `send`는 전체를 보낼 때까지 기다리며, 닫힌 상대에게 쓰면 `-EPIPE`를 돌려주고 `SIGPIPE`를 일으키지 않습니다.
+  소켓은 `MSG_NOSIGNAL`, 파이프는 쓰는 동안 그 스레드에서 `SIGPIPE`를 막고 그 쓰기가 만든 신호를 `sigtimedwait`로
+  거둡니다. 그래서 샌드박스 프로그램이 표준 입력을 일찍 닫아도 SIGPIPE를 무시하지 않은 호출자가 죽지 않습니다.
 
 ## JSON
 

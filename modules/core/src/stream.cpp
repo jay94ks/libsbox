@@ -1,12 +1,49 @@
 #include <sbox/core/stream.hpp>
 #include <sbox/core/eventloop.hpp>
 #include <cerrno>
+#include <csignal>
+#include <ctime>
 #include <fcntl.h>
+#include <pthread.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 namespace sbox {
+
+    namespace {
+
+        /*
+         * write(2) that reports EPIPE instead of raising SIGPIPE: the signal is blocked in this
+         * thread for the call and a SIGPIPE the write itself caused is consumed before the
+         * mask is restored. A reader that closes early (a sandboxed program closing its stdin)
+         * must not be able to kill a caller that did not ignore SIGPIPE.
+         */
+        ssize_t writeNoSigpipe(int fd, const void* data, size_t size) noexcept {
+            sigset_t pipeSet, saved, pending;
+            sigemptyset(&pipeSet);
+            sigaddset(&pipeSet, SIGPIPE);
+            ::pthread_sigmask(SIG_BLOCK, &pipeSet, &saved);
+
+            // --> A SIGPIPE that was already pending is not ours to consume.
+            sigemptyset(&pending);
+            ::sigpending(&pending);
+            bool wasPending = sigismember(&pending, SIGPIPE) == 1;
+
+            ssize_t n = ::write(fd, data, size);
+            int err = errno;
+            if (n < 0 && err == EPIPE && !wasPending) {
+                struct timespec zero{ 0, 0 };
+                while (::sigtimedwait(&pipeSet, nullptr, &zero) < 0 && errno == EINTR) {
+                }
+            }
+
+            ::pthread_sigmask(SIG_SETMASK, &saved, nullptr);
+            errno = err;
+            return n;
+        }
+
+    }
 
     /* Takes ownership of a descriptor. */
     CStream::CStream(CFd fd) noexcept : _fd(std::move(fd)) {
@@ -87,7 +124,7 @@ namespace sbox {
         while (true) {
             ssize_t n = _socket
                 ? ::send(_fd.get(), buffer.data, buffer.size, MSG_NOSIGNAL | MSG_DONTWAIT)
-                : ::write(_fd.get(), buffer.data, buffer.size);
+                : writeNoSigpipe(_fd.get(), buffer.data, buffer.size);
 
             if (n >= 0) {
                 return SIoResult{ SBOX_OK, size_t(n) };
