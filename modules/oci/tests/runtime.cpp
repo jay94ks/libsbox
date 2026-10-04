@@ -161,7 +161,20 @@ TEST_CASE("lifecycle through the library: create, state, start, kill, delete") {
         REQUIRE(co_await rt.state(e.id, st) == SBOX_OK);
         CHECK(st.status == ECST_RUNNING);
         CHECK(!CFile::exists(e.root + "/" + e.id + "/exec.fifo"));
-        CHECK(trim(readFile("/proc/" + std::to_string(st.pid) + "/comm")) == "sleep");
+
+        // --> start only releases the exec fifo, like runc; the execve itself happens right after
+        // in the container process, so under load the old comm can still be visible briefly.
+        std::string comm;
+        for (int32_t i = 0; i < 200; ++i) {
+            comm = trim(readFile("/proc/" + std::to_string(st.pid) + "/comm"));
+            if (comm == "sleep") {
+                break;
+            }
+
+            co_await CEventLoop::current()->sleepFor(10);
+        }
+
+        CHECK(comm == "sleep");
 
         CHECK(co_await rt.start(e.id) == -EBUSY);
         CHECK(rt.lastError() == "cannot start an already running container");

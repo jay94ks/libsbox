@@ -21,7 +21,9 @@ using namespace sbox;
 
 TTask<SBoxResult> judge(std::string input) {
     SBoxPolicy p = SBoxPolicy::strict();
-    p.mounts = { { "/usr", "/usr", EBMNT_READ_ONLY }, { "/srv/job", "/work", EBMNT_READ_WRITE } };
+    p.mounts = SBoxPolicy::systemMounts();      // /usr, /etc ... read-only
+    p.mounts.push_back({ "/srv/job", "/work", EBMNT_READ_WRITE });
+    p.cwd = "/work";
     p.memoryMax = 256 << 20;
     p.pidsMax = 64;
     p.wallTimeoutMs = 5000;
@@ -51,8 +53,23 @@ ctest --test-dir build -j8 --output-on-failure
 외부 종속성은 `thirdparty/`의 git submodule([doctest](https://github.com/doctest/doctest),
 [libcertpp](https://github.com/jay94ks/libcertpp))뿐입니다.
 
+## 명령줄 도구
+
+| 도구 | 역할 |
+|---|---|
+| `sbox`, `sboxrun` | runc 호환 OCI 런타임(dockerd/containerd에 런타임으로 등록) |
+| `sbox-image` | 이미지 pull/push, 저장소, 번들 생성, overlay 마운트, save/load |
+| `sboxvol` | 볼륨 관리와 Docker 볼륨 플러그인 데몬 |
+| `sboxnet` | Docker 네트워크/IPAM 플러그인 데몬 |
+| `sbox-cni` | CNI 1.0 플러그인 |
+| `sbox-wg` | WireGuard(사용자 공간/커널) 터널과 클라이언트 설정 |
+| `sbox-ike` | IKEv2/IPsec 서버, 인증서와 OS별 클라이언트 설정 생성 |
+
+사용법은 [docs/usage.md](docs/usage.md)를 보십시오.
+
 ## 문서
 
 - [아키텍처](docs/architecture.md): 모듈 구성, 실행 모델, 위협 모델
+- [빠른 시작](docs/usage.md)
 - [코딩 컨벤션](docs/coding-conventions.md)
-- 모듈별 문서: `docs/<모듈>.md`
+- 모듈별 문서: `docs/<모듈>.md`, 통합 테스트: [docs/e2e.md](docs/e2e.md)

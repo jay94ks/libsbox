@@ -28,7 +28,8 @@ thirdparty/         git submodule: doctest, libcertpp
 | image | `sbox::image` | `modules/image/include/sbox/image/` | archive, http, tls, libcertpp | 내용 주소 저장소(OCI image layout), Registry API v2 pull, 레이어 풀기, overlayfs 스냅샷, docker save/load |
 | vol | `sbox::vol` | `modules/vol/include/sbox/vol/` | archive, http | 이름 있는 볼륨, bind/tmpfs/NFS, 프로젝트 쿼터, 백업, Docker 볼륨 플러그인 |
 | net | `sbox::net` | `modules/net/include/sbox/net/` | http | rtnetlink, nftables, 브릿지/veth/macvlan/ipvlan, IPAM, CNI 플러그인, Docker 네트워크 플러그인 |
-| vpn | `sbox::vpn` | `modules/vpn/include/sbox/vpn/` | net, libcertpp | WireGuard(커널 또는 사용자 공간), IKEv2/IPsec(XFRM), L2TP/IPsec, 호스트 간 가상 네트워크 드라이버 |
+| vpn | `sbox::vpn` | `modules/vpn/include/sbox/vpn/{wg,ipsec,l2tp}/` | net, libcertpp | WireGuard(커널 또는 사용자 공간)와 호스트 간 `wg-overlay` 드라이버([vpn-wg.md](vpn-wg.md)), XFRM·사용자 공간 ESP·IKEv2 응답자([vpn-ipsec.md](vpn-ipsec.md)), L2TP/IPsec([vpn-l2tp.md](vpn-l2tp.md)) |
+| e2e | - | (테스트 전용) | 전부 | 모듈을 함께 쓰는 종단 간 시나리오와 적대적 코드 테스트([e2e.md](e2e.md)) |
 
 모듈 의존은 위에서 아래로만 흐릅니다. 각 모듈은 `modules/<m>/CMakeLists.txt`의
 `sbox_add_module(<m> DEPENDS ...)` 한 줄로 선언되고, 루트 CMake가 모듈 디렉터리를 자동으로 찾습니다.
@@ -44,6 +45,7 @@ thirdparty/         git submodule: doctest, libcertpp
 ```cpp
 SBoxPolicy p;
 p.mounts = { { "/usr", "/usr", EBMNT_READ_ONLY }, { "/srv/job", "/work", EBMNT_READ_WRITE } };
+p.cwd = "/work";
 p.memoryMax = 256 << 20;
 p.pidsMax = 64;
 p.wallTimeoutMs = 5000;
@@ -54,6 +56,16 @@ co_await box.stdinPipe().send(BytesOf(input));
 box.stdinPipe().close();
 SBoxResult r = co_await box.wait();
 ```
+
+호스트 `/usr`만 바인드해도 merged-`/usr` 호스트의 `/bin`, `/lib*` 링크는 box가 함께 마련합니다.
+`/etc/alternatives`를 거치는 실행 파일(배포판의 `python3` 등)은 `/etc`도 필요하므로 실제로는
+`SBoxPolicy::systemMounts()`에서 시작하는 편이 안전합니다.
+
+## 명령줄 도구
+
+`cli/` 아래 도구들은 각 모듈의 얇은 래퍼입니다: `sbox`/`sboxrun`(oci), `sbox-image`(image),
+`sboxvol`·`sboxnet`(vol, net의 Docker 플러그인 데몬), `sbox-cni`(net), `sbox-wg`(vpn/wg),
+`sbox-ike`(vpn/ipsec). 사용법은 [usage.md](usage.md)에 있습니다.
 
 ## 위협 모델
 
