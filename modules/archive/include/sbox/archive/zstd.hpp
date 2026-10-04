@@ -29,6 +29,7 @@ namespace archive {
          */
         explicit CZstdDecoder(uint64_t maxWindow = uint64_t(128) << 20);
 
+        /** Destroys the decoder. */
         ~CZstdDecoder() override;
 
         CZstdDecoder(const CZstdDecoder&) = delete;

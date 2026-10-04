@@ -211,6 +211,23 @@ namespace fsutil {
                     break;
                 }
 
+                if (errno == EPERM) {
+                    // --> Older seccomp profiles answer unknown system calls with EPERM. If the
+                    // portable walk succeeds, openat2 is what was refused: stop using it.
+                    int32_t rc;
+                    try {
+                        rc = walkInRoot(rootFd, rel, out);
+                    } catch (const std::bad_alloc&) {
+                        return -ENOMEM;
+                    }
+
+                    if (rc == SBOX_OK) {
+                        noOpenat2 = true;
+                    }
+
+                    return rc;
+                }
+
                 return -errno;
             }
 

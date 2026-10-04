@@ -415,6 +415,41 @@ namespace archive {
         return SBOX_OK;
     }
 
+    /* Writes a tree as a (compressed) archive into a sink. */
+    int32_t WriteTreeArchive(const std::string& root, IByteSink& out, ECompression compression, int32_t level,
+                             const STreeOptions& options, const SPipelineHooks& hooks) {
+        if (compression == ECOMP_ZSTD || compression == ECOMP_AUTO || compression == ECOMP_INVALID) {
+            return -ENOTSUP;
+        }
+
+        IByteSink* cur = &out;
+        std::unique_ptr<CTapSink> tapC;
+        std::unique_ptr<CCodecSink> enc;
+        std::unique_ptr<CTapSink> tapU;
+        if (hooks.compressed) {
+            tapC = std::make_unique<CTapSink>(*cur, hooks.compressed);
+            cur = tapC.get();
+        }
+
+        if (compression != ECOMP_NONE) {
+            enc = std::make_unique<CCodecSink>(CreateEncoder(compression, level), *cur);
+            cur = enc.get();
+        }
+
+        if (hooks.uncompressed) {
+            tapU = std::make_unique<CTapSink>(*cur, hooks.uncompressed);
+            cur = tapU.get();
+        }
+
+        CTarWriter writer(*cur, options.format);
+        int32_t rc = WriteTree(root, writer, options);
+        if (rc < 0) {
+            return rc;
+        }
+
+        return writer.finish();
+    }
+
     struct CTreeTarSource::SImpl {
         std::vector<uint8_t> out;
         size_t pos = 0;

@@ -50,6 +50,7 @@ namespace archive {
          */
         explicit CInflater(EDeflateFormat format = EDFMT_GZIP, bool multiMember = true);
 
+        /** Destroys the decoder. */
         ~CInflater() override;
 
         CInflater(const CInflater&) = delete;
@@ -105,6 +106,7 @@ namespace archive {
          */
         explicit CDeflater(EDeflateFormat format = EDFMT_GZIP, int32_t level = -1);
 
+        /** Destroys the encoder. */
         ~CDeflater() override;
 
         CDeflater(const CDeflater&) = delete;

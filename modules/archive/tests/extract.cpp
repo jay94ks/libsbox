@@ -763,3 +763,44 @@ TEST_CASE("encode/decode IStream adapters over a pipe") {
     std::vector<uint8_t> got = loop.run(consumer());
     CHECK(got == data);
 }
+
+TEST_CASE("file descriptor pipeline: WriteTreeArchive -> file -> ExtractArchive") {
+    TempDir src("fd-src");
+    populate(src.path);
+    std::map<std::string, std::string> want;
+    describe(src.path, "", want);
+    TempDir work("fd-work");
+    std::string blob = work / "layer.tar.gz";
+
+    int fd = ::open(blob.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+    REQUIRE(fd >= 0);
+    uint64_t tarBytes = 0;
+    uint64_t gzBytes = 0;
+    SPipelineHooks hooks;
+    hooks.uncompressed = [&](const SReadOnlyByteSpan& s) { tarBytes += s.size; };
+    hooks.compressed = [&](const SReadOnlyByteSpan& s) { gzBytes += s.size; };
+    {
+        CFdSink sink(fd);
+        CHECK(WriteTreeArchive(src.path, sink, ECOMP_GZIP, 9, STreeOptions(), hooks) == SBOX_OK);
+    }
+
+    ::close(fd);
+    CHECK(uint64_t(lst(blob).st_size) == gzBytes);
+    CHECK(tarBytes % 512 == 0);
+
+    TempDir dst("fd-dst");
+    fd = ::open(blob.c_str(), O_RDONLY | O_CLOEXEC);
+    REQUIRE(fd >= 0);
+    CFdSource source(fd);
+    SExtractStats stats;
+    CHECK(ExtractArchive(source, dst.path, SExtractOptions(), ECOMP_GZIP, SPipelineHooks(), &stats) == SBOX_OK);
+    ::close(fd);
+    CHECK(stats.bytes > 300000);
+    std::map<std::string, std::string> got;
+    describe(dst.path, "", got);
+    CHECK(got == want);
+
+    std::vector<uint8_t> unused;
+    CVectorSink none(unused);
+    CHECK(WriteTreeArchive(src.path, none, ECOMP_ZSTD) == -ENOTSUP);
+}

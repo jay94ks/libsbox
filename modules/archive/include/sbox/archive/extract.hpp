@@ -49,6 +49,9 @@ namespace archive {
         int32_t error;
     };
 
+    /**
+     * Receiver of non-fatal events.
+     */
     using FExtractNotice = std::function<void(const SExtractNotice&)>;
 
     /**
@@ -102,8 +105,10 @@ namespace archive {
         std::unique_ptr<SImpl> _impl;
 
     public:
+        /** Creates an extractor; call open() before feeding entries. */
         explicit CExtractor(const SExtractOptions& options = SExtractOptions());
 
+        /** Destroys the extractor. */
         ~CExtractor() override;
 
         CExtractor(const CExtractor&) = delete;

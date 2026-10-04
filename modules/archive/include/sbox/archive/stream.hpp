@@ -58,6 +58,7 @@ namespace archive {
         int _fd;
 
     public:
+        /** Reads from `fd` (not owned). */
         explicit CFdSource(int fd) noexcept : _fd(fd) {}
 
         /**
@@ -74,6 +75,7 @@ namespace archive {
         int _fd;
 
     public:
+        /** Writes to `fd` (not owned). */
         explicit CFdSink(int fd) noexcept : _fd(fd) {}
 
         /**
@@ -91,6 +93,7 @@ namespace archive {
         size_t _pos = 0;
 
     public:
+        /** Reads from `data` (not copied). */
         explicit CMemorySource(const SReadOnlyByteSpan& data) noexcept : _data(data) {}
 
         /**
@@ -107,6 +110,7 @@ namespace archive {
         std::vector<uint8_t>& _out;
 
     public:
+        /** Appends to `out` (must outlive the sink). */
         explicit CVectorSink(std::vector<uint8_t>& out) noexcept : _out(out) {}
 
         /**
@@ -124,6 +128,7 @@ namespace archive {
         FByteHook _hook;
 
     public:
+        /** Taps `upstream` (must outlive the tap). */
         CTapSource(IByteSource& upstream, FByteHook hook) : _upstream(upstream), _hook(std::move(hook)) {}
 
         /**
@@ -141,6 +146,7 @@ namespace archive {
         FByteHook _hook;
 
     public:
+        /** Taps the way into `downstream` (must outlive the tap). */
         CTapSink(IByteSink& downstream, FByteHook hook) : _downstream(downstream), _hook(std::move(hook)) {}
 
         /**

@@ -425,6 +425,28 @@ TEST_CASE("malformed archives are rejected") {
     }
 }
 
+TEST_CASE("random corruption never crashes the parser") {
+    std::vector<uint8_t> tar = fixture("tar_pax");
+    testdata::Rng r(777);
+    int32_t failures = 0;
+    for (int32_t iter = 0; iter < 3000; ++iter) {
+        std::vector<uint8_t> bad = tar;
+        int32_t flips = 1 + int32_t(r.next() % 8);
+        for (int32_t k = 0; k < flips; ++k) {
+            // --> Mostly the metadata area (headers and PAX records live in the first blocks).
+            size_t pos = (r.next() & 1) ? r.next() % 4096 : r.next() % bad.size();
+            bad[pos] = uint8_t(r.next());
+        }
+
+        Collector c;
+        int32_t rc = parse(bad, c, 1 + r.next() % 2000);
+        failures += rc < 0;
+        CHECK((rc == SBOX_OK || rc == -EBADMSG || rc == -ENODATA || rc == -ENOTSUP || rc == -EFBIG));
+    }
+
+    CHECK(failures > 0);
+}
+
 TEST_CASE("system tar reads our archives") {
     if (std::system("command -v tar >/dev/null 2>&1") != 0) {
         MESSAGE("tar binary not found, skipping");

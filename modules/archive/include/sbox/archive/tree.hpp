@@ -34,6 +34,17 @@ namespace archive {
     SBOX_API int32_t WriteTree(const std::string& root, CTarWriter& writer, const STreeOptions& options = STreeOptions());
 
     /**
+     * Writes the tree under `root` as a complete, optionally compressed archive into `out`
+     * (e.g. a CFdSink for a layer blob or a volume backup) and finishes `out`.
+     * @param compression ECOMP_NONE, ECOMP_GZIP, ECOMP_ZLIB or ECOMP_DEFLATE.
+     * @param level Compression level (-1 = default).
+     * @param hooks `uncompressed` sees the tar bytes (diffID), `compressed` the output bytes.
+     */
+    SBOX_API int32_t WriteTreeArchive(const std::string& root, IByteSink& out, ECompression compression = ECOMP_GZIP,
+                                      int32_t level = -1, const STreeOptions& options = STreeOptions(),
+                                      const SPipelineHooks& hooks = SPipelineHooks());
+
+    /**
      * Pull-style tar producer: reading from it walks the tree lazily and yields a complete tar
      * archive (end marker included). Wrap it in a CCodecSource to compress, and feed the result
      * to a file (Pump) or a coroutine stream (PumpSourceToStream).
@@ -49,6 +60,7 @@ namespace archive {
          */
         explicit CTreeTarSource(const std::string& root, const STreeOptions& options = STreeOptions());
 
+        /** Destroys the producer. */
         ~CTreeTarSource() override;
 
         CTreeTarSource(const CTreeTarSource&) = delete;

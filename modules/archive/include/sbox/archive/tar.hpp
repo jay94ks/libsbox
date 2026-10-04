@@ -82,8 +82,10 @@ namespace archive {
         std::unique_ptr<SImpl> _impl;
 
     public:
+        /** Creates a parser with the given limits. */
         explicit CTarParser(const STarLimits& limits = STarLimits());
 
+        /** Destroys the parser. */
         ~CTarParser();
 
         CTarParser(const CTarParser&) = delete;
@@ -165,6 +167,7 @@ namespace archive {
         bool _done = false;
 
     public:
+        /** Dispatches to `handler` (must outlive the sink). */
         explicit CTarSink(ITarHandler& handler, const STarLimits& limits = STarLimits());
 
         /**
@@ -193,6 +196,7 @@ namespace archive {
         bool _ended = false;
 
     public:
+        /** Reads the archive from `source` (must outlive the reader). */
         explicit CTarReader(IByteSource& source, const STarLimits& limits = STarLimits());
 
         /**
