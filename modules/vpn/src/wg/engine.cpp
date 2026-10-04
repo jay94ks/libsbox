@@ -1331,6 +1331,7 @@ namespace vpn {
         void fillStatus(const CWgAllowedIps& table, const Peer& p, SWgPeerStatus& out) {
             out.publicKey = p.publicKey;
             out.hasPresharedKey = p.hasPsk;
+            out.presharedKey = p.hasPsk ? SWgKey::fromBytes(p.psk) : SWgKey();
             out.endpoint = p.endpoint;
             out.allowedIps = table.prefixes(p.id);
             out.persistentKeepalive = p.keepalive;

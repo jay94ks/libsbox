@@ -66,6 +66,7 @@ namespace vpn {
      */
     struct SWgPeerStatus {
         SWgKey publicKey;
+        SWgKey presharedKey;            // --> Unset when the peer has none.
         bool hasPresharedKey = false;
         SEndpoint endpoint;
         std::vector<net::SIpPrefix> allowedIps;
@@ -75,6 +76,32 @@ namespace vpn {
         uint64_t rxBytes = 0;
         uint64_t txBytes = 0;
         uint32_t protocolVersion = 1;
+    };
+
+    /**
+     * A device-level change (`wg set` / WG_CMD_SET_DEVICE / UAPI "set=1"): unset fields are left
+     * as they are.
+     */
+    struct SWgDeviceConfig {
+        SWgKey privateKey;              // --> Unset: unchanged; an all-zero key removes the identity.
+        int32_t listenPort = -1;        // --> -1: unchanged; 0: random.
+        int64_t fwmark = -1;            // --> -1: unchanged; 0: off.
+        bool replacePeers = false;      // --> Remove every peer not listed.
+        std::vector<SWgPeerConfig> peers;
+    };
+
+    /**
+     * Run-time view of a device (`wg show`).
+     */
+    struct SWgDeviceStatus {
+        std::string name;
+        int32_t ifIndex = 0;
+        bool kernel = false;            // --> Kernel module (true) or the user-space engine.
+        SWgKey privateKey;
+        SWgKey publicKey;
+        uint16_t listenPort = 0;
+        uint32_t fwmark = 0;
+        std::vector<SWgPeerStatus> peers;
     };
 
     /**
