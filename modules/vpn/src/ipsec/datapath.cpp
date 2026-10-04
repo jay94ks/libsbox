@@ -58,6 +58,57 @@ namespace vpn {
             co_return SBOX_OK;
         }
 
+        /* Routes for remote selectors. */
+        TTask<void> RouteRemoteSelectors(const SIpsecDataPathOptions& options, std::string name, SIpsecChildSa child, bool add) {
+            if (name.empty()) {
+                co_return;
+            }
+
+            net::CRtnl rtnl;
+            if (rtnl.open(options.netnsPath) != SBOX_OK) {
+                co_return;
+            }
+
+            int32_t index = co_await rtnl.linkIndex(name);
+            if (index <= 0) {
+                co_return;
+            }
+
+            for (const SIkeTrafficSelector& ts : child.remoteTs) {
+                for (const net::SIpPrefix& p : ts.toPrefixes()) {
+                    // --> Never a default route, and never a route that would send the tunnel's
+                    // own outer packets into the tunnel.
+                    if (p.length == 0 || p.network().contains(child.remote)) {
+                        continue;
+                    }
+
+                    // --> Addresses of the interface's own subnets (the pool) are routed already.
+                    bool covered = false;
+                    for (const net::SIpPrefix& own : options.addresses) {
+                        covered = covered || (own.network().contains(p.address) && own.length <= p.length);
+                    }
+
+                    for (const net::SIpPrefix& own : options.routes) {
+                        covered = covered || (own.network().contains(p.address) && own.length <= p.length);
+                    }
+
+                    if (covered) {
+                        continue;
+                    }
+
+                    net::SRouteInfo route;
+                    route.destination = p.network();
+                    route.oif = index;
+                    if (add) {
+                        co_await rtnl.addRoute(route, true);
+                    }
+                    else {
+                        co_await rtnl.delRoute(route);
+                    }
+                }
+            }
+        }
+
         /* Selector match of a raw IP packet. */
         bool PacketMatches(const SReadOnlyByteSpan& ip, const std::vector<SIkeTrafficSelector>& srcTs,
                            const std::vector<SIkeTrafficSelector>& dstTs) {
@@ -396,6 +447,7 @@ namespace vpn {
                     }
 
                     _policies[child.reqid] = std::move(policies);
+                    co_await RouteRemoteSelectors(_options, _ifName, child, true);
                     co_return SBOX_OK;
                 }
 
@@ -412,6 +464,8 @@ namespace vpn {
 
                             _policies.erase(it);
                         }
+
+                        co_await RouteRemoteSelectors(_options, _ifName, child, false);
                     }
 
                     co_return r1 != SBOX_OK && r1 != -ESRCH ? r1 : (r2 != SBOX_OK && r2 != -ESRCH ? r2 : SBOX_OK);

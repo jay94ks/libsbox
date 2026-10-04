@@ -495,6 +495,12 @@ namespace vpn {
                 co_await moveSession(s, dg);
             }
 
+            // --> CHILD SAs created by this request use the endpoints it arrived on (after NAT
+            // detection the client moves from port 500 to 4500 between IKE_SA_INIT and IKE_AUTH).
+            s->local = dg.local;
+            s->remote = dg.remote;
+            s->natT = dg.natT;
+
             switch (h.exchange) {
             case EIKE_X_AUTH:
                 co_await onAuth(s, payloads, response);
@@ -727,7 +733,7 @@ namespace vpn {
             s->natLocal = sawNatD && (!dstMatch || config.forceEncap);
             s->peerFragmentation = findNotify(notifies, EIKE_N_IKEV2_FRAGMENTATION_SUPPORTED) != nullptr;
             s->fragmentation = s->peerFragmentation;
-            s->fragmentSize = config.fragmentSize;
+            s->fragmentSize = IkeMessageLimit(config.fragmentSize);
             if (const SIkeNotify* hashes = findNotify(notifies, EIKE_N_SIGNATURE_HASH_ALGORITHMS)) {
                 s->peerHashes = ParseHashAlgorithms(BytesOf(hashes->data));
             }

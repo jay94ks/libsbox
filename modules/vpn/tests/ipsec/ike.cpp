@@ -85,6 +85,12 @@ namespace {
         CHECK(srv->integ == client.integ);
         CHECK(srv->localTs == client.remoteTs);
         CHECK(srv->remoteTs == client.localTs);
+        CHECK(srv->encap == client.encap);
+        if (client.encap) {
+            // --> Both ends must use the NAT-T ports the IKE_AUTH exchange ran on.
+            CHECK(srv->remotePort == client.localPort);
+            CHECK(srv->localPort == client.remotePort);
+        }
     }
 
 }

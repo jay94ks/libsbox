@@ -58,6 +58,10 @@ IKEv1은 아직 없고 후속 작업이 붙입니다. 그대로 재사용할 수
   셀렉터 안에 있을 때만 TUN에 씁니다. NAT 매핑이 바뀌면 인증된 ESP-in-UDP의 출발지로 따라갑니다.
   tunnel 모드, 32비트 시퀀스 번호(ESN 없음)만 지원합니다.
 
+두 경로 모두 가상 IP 없이 붙는 사이트 간 상대(CP 없음)의 원격 셀렉터에 대해, 인터페이스 주소나 `routes`가
+이미 덮지 않는 접두사를 데이터 경로 인터페이스로 라우팅합니다(기본 경로 /0과 상대 외부 주소를 포함하는
+접두사는 제외).
+
 `SIpsecDataPathOptions`: `kind`, `netnsPath`, `interfaceName`, `ifId`, `mtu`(1400), `addresses`, `routes`,
 `reqidBase`(기본 `0x5b000000`, 이 소유자의 reqid 범위), `flushStale`(시작 시 이전 실행이 남긴 같은 범위의
 SA/정책 제거). 다른 프로그램(strongSwan 등)의 XFRM 항목은 건드리지 않습니다: `CXfrm::flushOwned()`는
@@ -98,7 +102,8 @@ mark, `if_id`, reqid 범위 중 지정한 기준에 맞는 항목만 지웁니�
   DELETE를 보냅니다.
 - **메시지 ID와 재전송**: 창 크기 1. 처리한 마지막 요청의 응답(단편 전부)을 캐시하고, 같은 ID가 다시 오면
   (단편 요청은 1번 단편일 때만) 캐시를 다시 보냅니다. 기대하지 않은 ID는 버립니다.
-- **단편화(RFC 7383)**: 양쪽이 지원을 알리면 `fragmentSize`(기본 1280바이트)보다 큰 메시지를 SKF로 나눕니다.
+- **단편화(RFC 7383)**: 양쪽이 지원을 알리면 IP 데이터그램이 `fragmentSize`(기본 1280바이트, IPv6+UDP+marker 52바이트를 뺀
+  크기가 IKE 메시지 한도)를 넘는 메시지를 SKF로 나눕니다.
   받는 쪽은 단편마다 개별 인증·복호화하고 순서와 무관하게 모으며, 더 큰 Total Fragments가 오면 다시
   시작합니다(최대 128개). Windows와 iOS는 인증서가 든 IKE_AUTH에서 이것이 필요합니다.
 - **INITIAL_CONTACT**: 같은 신원의 이전 IKE SA를 지우고 주소를 돌려받아, 다시 붙은 클라이언트가 같은 가상
@@ -283,8 +288,8 @@ rasdial 'Office' alice s3cret
 | `ipsec/ike` | 루프백에서 응답자와 테스트 개시자: PSK, 잘못된 PSK, EAP-MSCHAPv2(RFC 7427 유무, 고정 주소, 잘못된 비밀번호, 신뢰하지 않는 서버 인증서), 인증서 양쪽(DN/FQDN/RFC822 신원, 불일치·미신뢰 거부), 단편화 양방향, CHILD(PFS)/IKE 재키잉 후 DPD·DELETE, 서버 DPD(응답·무응답), 서버 측 끊기, COOKIE, INVALID_KE, 강제 NAT-T, Windows 기본 제안, 공통 제안 없음, INITIAL_CONTACT |
 | `ipsec/esp` | ESP 왕복, 재전송 방지 창, 수작업으로 만든 RFC 4303/4106 패킷, 패딩 검사 |
 | `ipsec/certs` | RSA CA/서버 인증서(EKU, KU, SAN), PEM/키 왕복, 체인 검증, 서명 방식 1/9/14, 신원 바인딩, PKCS#12, OpenSSL 교차 검증(설치 시), 클라이언트 프로파일 |
-| `ipsec/xfrm` (root) | 지원 탐지, 정책 추가/조회/삭제/소유자 범위 정리, SA(커널 ESP 있을 때), xfrm 인터페이스(있을 때), 정책 만료·acquire 알림 |
-| `ipsec/datapath` (root) | 두 netns와 veth: 사용자 공간 ESP로 IKE + 실제 UDP 트래픽 왕복(raw ESP, UDP 4500), 재키잉 후 트래픽; 커널 XFRM 경로(커널 ESP 있을 때) |
+| `ipsec/xfrm` (root) | 지원 탐지, 정책 추가/조회/삭제/소유자 범위 정리, SA(커널 ESP 있을 때), xfrm 인터페이스(있을 때), 정책 만료·acquire 알림, 커널 데이터 경로의 SPI 할당(larval SA)·설치 거부·정리, 커널 모드 IKE 소켓(우회 정책 + UDP_ENCAP에서도 IKE 수신) |
+| `ipsec/datapath` (root) | 두 netns와 veth: 사용자 공간 ESP로 IKE + 실제 UDP 트래픽 왕복(raw ESP, UDP 4500, 가상 IP 없는 사이트 간), 재키잉 후 트래픽; 커널 XFRM 경로(커널 ESP 있을 때) |
 | `ipsec/interop` | strongSwan(swanctl+charon)이 있으면 개시자로 붙여 봄, 없으면 건너뜀 |
 
 ## 제한 사항

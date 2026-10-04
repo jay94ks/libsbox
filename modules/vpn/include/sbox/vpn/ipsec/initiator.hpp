@@ -51,7 +51,7 @@ namespace vpn {
         std::vector<SIkeTrafficSelector> tsi;   // --> Empty: 0.0.0.0/0.
         std::vector<SIkeTrafficSelector> tsr;   // --> Empty: 0.0.0.0/0.
         bool fragmentation = true;
-        size_t fragmentSize = 1280;
+        size_t fragmentSize = 1280;         // --> Largest IP datagram before fragmentation.
         bool forceNatT = false;             // --> Fake a NAT so everything uses UDP 4500.
         bool rfc7427 = true;                // --> Announce SIGNATURE_HASH_ALGORITHMS.
         bool mobike = false;

@@ -61,12 +61,19 @@ namespace {
                 co_return r;
             }
 
+            r = co_await cli.createVeth("clan0", "clan1");
+            if (r != SBOX_OK) {
+                co_return r;
+            }
+
             struct Addr { net::CRtnl* rtnl; const char* name; const char* addr; };
             Addr addrs[] = {
                 { &srv, "wan0", "10.99.0.1/24" },
                 { &cli, "wan1", "10.99.0.2/24" },
                 { &srv, "lan0", "10.88.0.1/24" },
                 { &srv, "lan1", nullptr },
+                { &cli, "clan0", "10.66.0.1/24" },
+                { &cli, "clan1", nullptr },
                 { &srv, "lo", nullptr },
                 { &cli, "lo", nullptr },
             };
@@ -146,7 +153,7 @@ namespace {
      * Brings up a server and a client with user-space ESP and exchanges traffic through the
      * tunnel: client (virtual IP) -> 10.88.0.1 behind the server, and back.
      */
-    TTask<void> tunnelTraffic(Topology& topo, bool forceEncap) {
+    TTask<void> tunnelTraffic(Topology& topo, bool forceEncap, bool siteToSite) {
         SIkeServerConfig cfg;
         cfg.listenAddress = "10.99.0.1";
         cfg.netnsPath = topo.server;
@@ -180,6 +187,12 @@ namespace {
         cc.identity = "@client.test";
         cc.psk = psk.secret;
         cc.tsr.push_back(SIkeTrafficSelector::fromPrefix(prefix("10.88.0.0/16")));
+        if (siteToSite) {
+            // --> No virtual IP: the client's LAN is the initiator selector.
+            cc.requestAddress = false;
+            cc.tsi.push_back(SIkeTrafficSelector::fromPrefix(prefix("10.66.0.0/24")));
+        }
+
         CIkeInitiator client(cc);
         REQUIRE(client.attach(clientPath) == SBOX_OK);
         REQUIRE(co_await clientPath->start() == SBOX_OK);
@@ -189,14 +202,22 @@ namespace {
         CHECK(client.natT() == forceEncap);
         CHECK(client.child().encap == forceEncap);
         std::string vip = client.virtualIp().toString();
-        CHECK(vip == "10.77.0.2");
+        if (siteToSite) {
+            CHECK_FALSE(client.virtualIp().isValid());
+            REQUIRE(client.child().localTs.size() == 1);
+            CHECK(client.child().localTs[0].toString() == "10.66.0.0/24");
+            vip = "10.66.0.1";
+        }
+        else {
+            CHECK(vip == "10.77.0.2");
 
-        // --> Give the client's tunnel interface its virtual address.
-        net::CRtnl rtnl;
-        REQUIRE(rtnl.open(topo.client) == SBOX_OK);
-        int32_t index = co_await rtnl.linkIndex("ikec0");
-        REQUIRE(index > 0);
-        REQUIRE(co_await rtnl.addAddress(index, net::SIpPrefix(client.virtualIp(), 32)) == SBOX_OK);
+            // --> Give the client's tunnel interface its virtual address.
+            net::CRtnl rtnl;
+            REQUIRE(rtnl.open(topo.client) == SBOX_OK);
+            int32_t index = co_await rtnl.linkIndex("ikec0");
+            REQUIRE(index > 0);
+            REQUIRE(co_await rtnl.addAddress(index, net::SIpPrefix(client.virtualIp(), 32)) == SBOX_OK);
+        }
 
         CFd lan = udpSocket(topo.server, "10.88.0.1", 7001);
         CFd mobile = udpSocket(topo.client, vip, 7002);
@@ -262,7 +283,8 @@ TEST_CASE("User-space ESP data path carries traffic between namespaces (raw ESP 
         return;
     }
 
-    for (bool encap : { false, true }) {
+    struct Variant { bool encap; bool siteToSite; };
+    for (Variant v : { Variant{ false, false }, Variant{ true, false }, Variant{ false, true } }) {
         Topology topo;
         CEventLoop loop;
         int32_t r = loop.run(topo.build());
@@ -272,7 +294,7 @@ TEST_CASE("User-space ESP data path carries traffic between namespaces (raw ESP 
         }
 
         REQUIRE_MESSAGE(r == SBOX_OK, "topology " << r);
-        loop.run(tunnelTraffic(topo, encap));
+        loop.run(tunnelTraffic(topo, v.encap, v.siteToSite));
     }
 }
 

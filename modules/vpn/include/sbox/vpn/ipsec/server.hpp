@@ -95,7 +95,7 @@ namespace vpn {
         uint32_t retransmitTries = 5;
         uint32_t retransmitBaseMs = 2000;
         uint32_t maxSessions = 1024;
-        size_t fragmentSize = 1280;         // --> Largest IKE message before RFC 7383 fragmentation.
+        size_t fragmentSize = 1280;         // --> Largest IP datagram before RFC 7383 fragmentation.
         bool forceEncap = false;            // --> Pretend a NAT so clients always use UDP 4500.
         bool mobike = true;
     };

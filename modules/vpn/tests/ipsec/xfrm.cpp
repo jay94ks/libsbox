@@ -4,6 +4,7 @@
 #include <sbox/vpn/ipsec/ikesocket.hpp>
 #include <sbox/vpn/ipsec/xfrm.hpp>
 #include <sbox/net/rtnl.hpp>
+#include "ipsec/datapaths.hpp"
 #include "testutil.hpp"
 #include <arpa/inet.h>
 #include <cstring>
@@ -339,6 +340,78 @@ TEST_CASE("XFRM notifications: policy expiry and acquire") {
         ::close(fd);
         CHECK(acquired);
         mon.close();
+    }(ns));
+}
+
+TEST_CASE("Kernel data path: SPI allocation, install (or refusal without esp4) and cleanup") {
+    if (!needRoot()) {
+        return;
+    }
+
+    TempDir dir;
+    std::string ns = dir.netns("kdp");
+    REQUIRE(!ns.empty());
+
+    CEventLoop loop;
+    loop.run([](std::string netns) -> TTask<void> {
+        CXfrm x;
+        SXfrmSupport support;
+        if (x.open(netns) != SBOX_OK || co_await x.probe(support) != SBOX_OK) {
+            MESSAGE("no NETLINK_XFRM");
+            co_return;
+        }
+
+        // --> Force the kernel path even where esp4 is missing to exercise everything up to
+        // the SA install.
+        SXfrmSupport forced = support;
+        forced.esp = true;
+        SIpsecDataPathOptions o;
+        o.netnsPath = netns;
+        o.reqidBase = 0x5d000000u;
+        IIpsecDataPathPtr path = ipsec::MakeKernelDataPath(o, forced);
+        REQUIRE(co_await path->start() == SBOX_OK);
+        CHECK(std::string(path->kind()) == "kernel");
+
+        SIpsecChildSa c;
+        c.reqid = 0x5d000001u;
+        c.local = ip("10.123.0.1");
+        c.remote = ip("10.123.0.2");
+        c.encr = EIKE_ENCR_AES_CBC;
+        c.keyBits = 128;
+        c.integ = EIKE_INTEG_HMAC_SHA2_256_128;
+        c.inEncKey.assign(16, 1);
+        c.outEncKey.assign(16, 2);
+        c.inIntegKey.assign(32, 3);
+        c.outIntegKey.assign(32, 4);
+        c.outboundSpi = 0xc0ffee;
+        c.localTs.push_back(SIkeTrafficSelector::fromPrefix(prefix("10.88.0.0/16")));
+        SIkeTrafficSelector odd;
+        odd.start = ip("10.77.0.1");
+        odd.end = ip("10.77.0.6");
+        c.remoteTs.push_back(odd);
+
+        REQUIRE(co_await path->allocateSpi(c.local, c.remote, c.reqid, c.inboundSpi) == SBOX_OK);
+        CHECK(c.inboundSpi >= 0x100);
+
+        int32_t r = co_await path->installChild(c);
+        if (!support.esp) {
+            CHECK(r == -EPROTONOSUPPORT);
+        }
+        else {
+            REQUIRE(r == SBOX_OK);
+            std::vector<SXfrmPolicy> policies;
+            REQUIRE(co_await x.listPolicies(policies) == SBOX_OK);
+            // --> 10.77.0.1-10.77.0.6 is three prefixes; out/in/fwd for each.
+            CHECK(policies.size() == 9);
+        }
+
+        co_await path->stop();
+        std::vector<SXfrmSa> sas;
+        REQUIRE(co_await x.listSas(sas) == SBOX_OK);
+        CHECK(sas.empty());
+        std::vector<SXfrmPolicy> policies;
+        REQUIRE(co_await x.listPolicies(policies) == SBOX_OK);
+        CHECK(policies.empty());
     }(ns));
 }
 

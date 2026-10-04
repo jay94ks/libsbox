@@ -449,6 +449,7 @@ namespace ipsec {
                 p.mode = child.mode;
                 p.local = UserState::endpoint(child.local, child.encap ? child.localPort : 0);
                 p.remote = UserState::endpoint(child.remote, child.encap ? child.remotePort : 0);
+                co_await RouteRemoteSelectors(_state->options, _state->ifName, child, true);
                 co_return SBOX_OK;
             }
 
@@ -464,6 +465,7 @@ namespace ipsec {
                         }
 
                         _state->policies.erase(it);
+                        co_await RouteRemoteSelectors(_state->options, _state->ifName, child, false);
                     }
                     else if (it->second.out && it->second.out->spi() == child.outboundSpi) {
                         // --> The child is replaced without a successor: stop sending.

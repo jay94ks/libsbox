@@ -491,7 +491,7 @@ namespace vpn {
                 s->natLocal = (sawNatD && !dstMatch) || config.forceNatT;
                 useNatT = s->natRemote || s->natLocal;
                 s->fragmentation = config.fragmentation && findNotify(notifies, EIKE_N_IKEV2_FRAGMENTATION_SUPPORTED);
-                s->fragmentSize = config.fragmentSize;
+                s->fragmentSize = IkeMessageLimit(config.fragmentSize);
                 if (const SIkeNotify* hashes = findNotify(notifies, EIKE_N_SIGNATURE_HASH_ALGORITHMS)) {
                     peerHashes = ParseHashAlgorithms(BytesOf(hashes->data));
                 }

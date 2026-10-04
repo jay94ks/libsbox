@@ -113,6 +113,14 @@ namespace ipsec {
     bool IdMatchesCertificate(const SIkeId& id, const CIkeCertificate& cert);
 
     /**
+     * Largest IKE message that fits an IP datagram of `ipSize` bytes (IPv6 + UDP + non-ESP
+     * marker subtracted, the worst case).
+     */
+    inline size_t IkeMessageLimit(size_t ipSize) {
+        return ipSize > 512 + 52 ? ipSize - 52 : 512;
+    }
+
+    /**
      * Encodes an unencrypted message (IKE_SA_INIT) with its header length filled in.
      */
     std::vector<uint8_t> EncodePlainMessage(SIkeHeader header, const std::vector<SIkePayload>& payloads);
@@ -149,7 +157,7 @@ namespace ipsec {
         bool natLocal = false;          // --> We are behind a NAT.
         bool natRemote = false;         // --> The peer is behind a NAT.
         bool fragmentation = false;     // --> Both sides announced RFC 7383 support.
-        size_t fragmentSize = 1280;
+        size_t fragmentSize = 1228;     // --> Largest IKE message (not IP datagram).
 
         // -- Exchanges the peer starts.
         uint32_t expectMid = 0;
