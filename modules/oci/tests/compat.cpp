@@ -398,7 +398,9 @@ TEST_CASE("create failures are reported in the JSON log with exit status 1") {
     REQUIRE(writeSpec(bundle, testSpec({ "missing-binary" })));
 
     std::string log = tmp / "log.json";
-    ToolResult r = runTool(tmp.path, tool("sboxrun"), { "--root", tmp / "state", "--log", log, "--log-format", "json", "create", "--bundle", bundle, "x1" });
+    // --> A unique id: the default cgroup is sbox/<id>, shared by every runtime state root.
+    std::string id = "log-" + randomSuffix();
+    ToolResult r = runTool(tmp.path, tool("sboxrun"), { "--root", tmp / "state", "--log", log, "--log-format", "json", "create", "--bundle", bundle, id });
     CHECK(r.code == 1);
     CJson last = lastLogLine(log);
     CHECK(last.get("level").asString() == "error");

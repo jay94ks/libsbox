@@ -278,11 +278,18 @@ namespace oci {
          * Looks up the program of a process inside a container's root (/proc/<pid>/root), with
          * the PATH of the process, so that "executable file not found" is reported by create
          * as runc does instead of surfacing as an exit status after start.
+         * @return SBOX_OK, -ENOENT (not found; `error` says why) or -ESRCH (the init is gone).
          */
-        bool findExecutable(pid_t pid, const SProcessSpec& p, std::string& error) {
+        int32_t findExecutable(pid_t pid, const SProcessSpec& p, std::string& error) {
             CFd root(::open(("/proc/" + std::to_string(pid) + "/root").c_str(), O_PATH | O_DIRECTORY | O_CLOEXEC));
             if (!root.isValid()) {
-                return true;    // --> Cannot look: let exec report it.
+                // --> The init is gone (killed during setup): create must not report success.
+                if (errno == ENOENT || errno == ESRCH) {
+                    error = "container init exited during setup";
+                    return -ESRCH;
+                }
+
+                return SBOX_OK;     // --> Cannot look: let exec report it.
             }
 
             auto usable = [&](const std::string& path) -> int {
@@ -318,10 +325,10 @@ namespace oci {
                 int err = usable(path);
                 if (err != 0) {
                     error = "exec: \"" + file + "\": stat " + path + ": " + std::strerror(err);
-                    return false;
+                    return -ENOENT;
                 }
 
-                return true;
+                return SBOX_OK;
             }
 
             std::string search = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
@@ -340,7 +347,7 @@ namespace oci {
                 }
 
                 if (usable(CFile::join(dir, file)) == 0) {
-                    return true;
+                    return SBOX_OK;
                 }
 
                 if (colon == std::string::npos) {
@@ -351,7 +358,7 @@ namespace oci {
             }
 
             error = "exec: \"" + file + "\": executable file not found in $PATH";
-            return false;
+            return -ENOENT;
         }
 
         /**
@@ -849,8 +856,8 @@ namespace oci {
                 break;
             }
 
-            if (!findExecutable(pid, process, err)) {
-                result = fail(-ENOENT, err);
+            if (int32_t frc = findExecutable(pid, process, err); frc != SBOX_OK) {
+                result = fail(frc, err);
                 break;
             }
 
