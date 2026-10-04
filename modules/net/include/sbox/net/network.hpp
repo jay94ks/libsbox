@@ -117,6 +117,7 @@ namespace net {
         std::vector<SPortMapping> ports;
         std::vector<std::string> aliases;
         std::string hostname;       // --> Sent to DHCP servers (option 12).
+        std::map<std::string, std::string> labels;  // --> Stored with the endpoint.
     };
 
     /**
@@ -136,6 +137,7 @@ namespace net {
         std::vector<std::string> aliases;
         uint32_t mtu = 0;
         bool joined = false;
+        std::map<std::string, std::string> labels;
         CJson driverState;          // --> Driver-private data (object), e.g. a DHCP lease.
 
         /** Returns the first address of a family, or an unset prefix. */

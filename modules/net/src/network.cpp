@@ -432,6 +432,7 @@ namespace net {
         j.set("Aliases", CJson::fromStrings(aliases));
         j.set("Mtu", mtu);
         j.set("Joined", joined);
+        j.set("Labels", mapJson(labels));
         j.set("DriverState", driverState.isObject() ? driverState : CJson::object());
         return j;
     }
@@ -478,6 +479,7 @@ namespace net {
         e.aliases = json.get("Aliases").asStrings();
         e.mtu = uint32_t(json.get("Mtu").asInt());
         e.joined = json.get("Joined").asBool();
+        e.labels = jsonMap(json.get("Labels"));
         e.driverState = json.get("DriverState").isObject() ? json.get("DriverState") : CJson::object();
         out = std::move(e);
         return SBOX_OK;
@@ -1043,6 +1045,7 @@ namespace net {
         ep.networkId = net.id;
         ep.containerId = request.containerId;
         ep.aliases = request.aliases;
+        ep.labels = request.labels;
         ep.ports = request.ports;
         ep.driverState = CJson::object();
         if (!request.hostname.empty()) {
