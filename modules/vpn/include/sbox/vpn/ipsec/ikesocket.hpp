@@ -85,6 +85,13 @@ namespace vpn {
         void espHandler(FEspPacketHandler handler);
 
         /**
+         * Installs (or with a null handler removes) a handler for the ESP-in-UDP packets of one
+         * SPI. It takes precedence over espHandler(), so another ESP user (the L2TP/IPsec
+         * transport-mode path) can share the NAT-T socket with the IKEv2 data path.
+         */
+        void espSpiHandler(uint32_t spi, FEspPacketHandler handler);
+
+        /**
          * Prepares the sockets for the kernel data path: the kernel decapsulates ESP-in-UDP on
          * the NAT-T sockets (UDP_ENCAP_ESPINUDP; IKE messages keep arriving on the socket) and
          * every socket gets IPsec bypass policies so IKE traffic is never protected by the SAs
