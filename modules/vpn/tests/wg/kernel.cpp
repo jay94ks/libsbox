@@ -44,7 +44,8 @@ namespace {
 
     /* Counts the peers of a SET_DEVICE message. */
     size_t peerCount(const net::CNlMessage& m) {
-        const net::SNlAttr* peers = attrsOf(m).find(EWGDA_PEERS);
+        net::CNlAttrs attrs = attrsOf(m);
+        const net::SNlAttr* peers = attrs.find(EWGDA_PEERS);
         return peers ? net::CNlAttrs::nested(*peers).items().size() : 0;
     }
 

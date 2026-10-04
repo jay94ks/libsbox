@@ -12,14 +12,23 @@ namespace vpn {
     // -- The `wireguard` generic netlink family (include/uapi/linux/wireguard.h), spelled out
     // so the library builds without the kernel header.
 
+    /** Name of the generic netlink family. */
     constexpr const char* WG_GENL_NAME = "wireguard";
+
+    /** Version of the generic netlink family. */
     constexpr uint8_t WG_GENL_VERSION = 1;
 
+    /**
+     * Commands of the family (WG_CMD_*).
+     */
     enum EWgCmd : uint8_t {
         EWGC_GET_DEVICE = 0,
         EWGC_SET_DEVICE = 1,
     };
 
+    /**
+     * Device attributes (WGDEVICE_A_*).
+     */
     enum EWgDeviceAttr : uint16_t {
         EWGDA_UNSPEC = 0,
         EWGDA_IFINDEX = 1,          // --> u32
@@ -32,10 +41,16 @@ namespace vpn {
         EWGDA_PEERS = 8,            // --> nested list of peers
     };
 
+    /**
+     * Device flags (WGDEVICE_F_*).
+     */
     enum EWgDeviceFlag : uint32_t {
         EWGDF_REPLACE_PEERS = 1u << 0,
     };
 
+    /**
+     * Peer attributes (WGPEER_A_*).
+     */
     enum EWgPeerAttr : uint16_t {
         EWGPA_UNSPEC = 0,
         EWGPA_PUBLIC_KEY = 1,
@@ -50,12 +65,18 @@ namespace vpn {
         EWGPA_PROTOCOL_VERSION = 10,            // --> u32
     };
 
+    /**
+     * Peer flags (WGPEER_F_*).
+     */
     enum EWgPeerFlag : uint32_t {
         EWGPF_REMOVE_ME = 1u << 0,
         EWGPF_REPLACE_ALLOWEDIPS = 1u << 1,
         EWGPF_UPDATE_ONLY = 1u << 2,
     };
 
+    /**
+     * Allowed-IP attributes (WGALLOWEDIP_A_*).
+     */
     enum EWgAllowedIpAttr : uint16_t {
         EWGAA_UNSPEC = 0,
         EWGAA_FAMILY = 1,           // --> u16 AF_INET / AF_INET6
