@@ -1,0 +1,1 @@
+sbox_add_module(core PUBLIC_HEADERS_IN_ROOT)
