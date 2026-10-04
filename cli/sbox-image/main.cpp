@@ -1,5 +1,6 @@
 // sbox-image: image management for libsbox (pull, push, images, inspect, tag, rmi, save, load,
-// bundle, mount/umount, commit, prune) over an OCI image layout store.
+// bundle, mount/umount, commit, prune) over an OCI image layout store. `bundle` can also attach
+// volumes (vol module) and a network (net module) to the container; see attach.hpp.
 #include <sbox/core/eventloop.hpp>
 #include <sbox/core/fd.hpp>
 #include <sbox/core/file.hpp>
@@ -12,6 +13,7 @@
 #include <sbox/image/store.hpp>
 #include <sbox/image/transfer.hpp>
 #include <sbox/archive/stream.hpp>
+#include "attach.hpp"
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
@@ -54,9 +56,19 @@ namespace {
         "  bundle [options] IMAGE DIR [-- ARGS...]\n"
         "      --user U --hostname H --entrypoint CMD --env K=V --cap-add C --cap-drop C\n"
         "      --tty --read-only --rootless --no-seccomp\n"
+        "      -v, --volume [SRC:]DST[:OPTS]  named/anonymous volume or host bind (docker run -v)\n"
+        "      --mount type=volume|bind|tmpfs,...  (docker run --mount)\n"
+        "      --tmpfs DST[:OPTS]             private tmpfs\n"
+        "      --volume-root DIR              volume store (default: /var/lib/sbox/volumes)\n"
+        "      --network NAME                 connect a new network namespace to a network\n"
+        "      -p, --publish [IP:]HOST:CTR[/PROTO]  port mapping (with --network; HOST 0 = ephemeral)\n"
+        "      --netns PATH                   join an existing network namespace instead\n"
+        "      --net-state-dir DIR            network state (default: /var/lib/sbox/net)\n"
+        "      --netns-dir DIR                where the namespace is pinned (default: /var/run/netns)\n"
         "  mount [--id ID] IMAGE [TARGET]   prepare a container root and mount it\n"
         "  umount ID\n"
-        "  rm ID                            unmount and delete a container root\n"
+        "  rm [-v] ID                       unmount and delete a container root, disconnect its network,\n"
+        "                                   release its volumes (-v: remove its anonymous volumes)\n"
         "  ps                               list container roots\n"
         "  commit [--author A] [--message M] ID [IMAGE]\n"
         "  prune [-a] [--dry-run]\n"
@@ -650,6 +662,7 @@ namespace {
     /* bundle */
     int cmdBundle(Globals& g, const std::vector<std::string>& args) {
         SBundleOptions o;
+        imagecli::AttachRequest attach;
         std::vector<std::string> pos;
         size_t i = 0;
         for (; i < args.size(); ++i) {
@@ -657,6 +670,16 @@ namespace {
             if (args[i] == "--") {
                 ++i;
                 break;
+            }
+
+            std::string attachError;
+            int32_t consumed = imagecli::ParseAttachOption(args, i, attach, attachError);
+            if (consumed < 0) {
+                return fail("bundle: " + attachError);
+            }
+
+            if (consumed > 0) {
+                continue;
             }
 
             if (takeValue(args, i, "--user", v) || takeValue(args, i, "-u", v)) {
@@ -725,15 +748,64 @@ namespace {
 
         SContainerInfo c;
         snap.container(id, c);
+
+        // --> Volumes and network after the root exists (copy-up reads the image content from
+        // it); a failure removes the half-made bundle so the command can simply be retried.
+        imagecli::AttachRecord record;
+        if (!attach.empty()) {
+            std::string attachError;
+            CEventLoop loop;
+            r = loop.run(imagecli::AttachContainer(attach, id, pos[1], c.rootfs, record, attachError));
+            if (r == SBOX_OK && (r = imagecli::SaveAttachRecord(g.root, record)) != SBOX_OK) {
+                attachError = std::string("cannot write the attachment record: ") + std::strerror(-r);
+                std::string ignored;
+                loop.run(imagecli::DetachContainer(record, true, ignored));
+            }
+
+            if (r != SBOX_OK) {
+                snap.remove(id);
+                ::unlink(CFile::join(pos[1], "config.json").c_str());
+                return fail("bundle: " + attachError);
+            }
+        }
+
         if (g.json) {
             CJson j = CJson::object();
             j.set("Id", id);
             j.set("Bundle", pos[1]);
             j.set("Rootfs", c.rootfs);
             j.set("Snapshotter", SnapshotModeName(c.mode));
+            if (!record.volumes.empty()) {
+                j.set("Volumes", CJson::fromStrings(record.volumes));
+            }
+
+            if (!record.netns.empty() || !attach.netns.empty()) {
+                j.set("Netns", record.netns.empty() ? attach.netns : record.netns);
+            }
+
+            if (!record.network.empty()) {
+                CJson n = CJson::object();
+                n.set("Name", record.network);
+                n.set("Address", record.address);
+                CJson ports = CJson::array();
+                for (const net::SPortMapping& m : record.ports) {
+                    ports.push(m.toJson());
+                }
+
+                n.set("Ports", std::move(ports));
+                j.set("Network", std::move(n));
+            }
+
             printJson(j);
         } else {
             std::printf("%s\n", id.c_str());
+            if (!record.network.empty() && !g.quiet) {
+                for (const net::SPortMapping& m : record.ports) {
+                    std::fprintf(stderr, "%s: %s %u/%s -> %s:%u\n", shortId(id).c_str(), record.network.c_str(),
+                                 unsigned(m.containerPort), m.protocolName().c_str(),
+                                 m.hostIp.isValid() ? m.hostIp.toString().c_str() : "0.0.0.0", unsigned(m.hostPort));
+                }
+            }
         }
 
         return 0;
@@ -795,7 +867,19 @@ namespace {
 
     /* umount / rm */
     int cmdUnmount(Globals& g, const std::vector<std::string>& args, bool remove) {
-        if (args.empty()) {
+        bool removeVolumes = false;
+        std::vector<std::string> ids;
+        for (const std::string& a : args) {
+            if (remove && (a == "-v" || a == "--volumes")) {
+                removeVolumes = true;
+            } else if (!a.empty() && a[0] == '-') {
+                return fail(std::string(remove ? "rm" : "umount") + ": unknown option " + a);
+            } else {
+                ids.push_back(a);
+            }
+        }
+
+        if (ids.empty()) {
             return fail(std::string(remove ? "rm" : "umount") + ": a container root ID is required");
         }
 
@@ -806,9 +890,31 @@ namespace {
 
         CSnapshotter snap(store);
         int rc = 0;
-        for (const std::string& id : args) {
+        for (const std::string& id : ids) {
+            // --> Network and volumes first: they reference the container, not its root.
+            bool attached = false;
+            if (remove) {
+                imagecli::AttachRecord record;
+                int32_t lr = imagecli::LoadAttachRecord(g.root, id, record);
+                if (lr == SBOX_OK) {
+                    attached = true;
+                    std::string error;
+                    CEventLoop loop;
+                    int32_t dr = loop.run(imagecli::DetachContainer(record, removeVolumes, error));
+                    if (dr != SBOX_OK) {
+                        rc = fail(id + ": " + error);
+                        continue;
+                    }
+
+                    ::unlink(imagecli::AttachRecordPath(g.root, id).c_str());
+                } else if (lr != -ENOENT) {
+                    rc = fail(id + ": unreadable attachment record " + imagecli::AttachRecordPath(g.root, id));
+                    continue;
+                }
+            }
+
             int32_t r = remove ? snap.remove(id) : snap.unmount(id);
-            if (r != SBOX_OK) {
+            if (r != SBOX_OK && !(attached && r == -ENOENT)) {
                 rc = fail(id + ": " + why(r, snap.lastError()));
             }
         }

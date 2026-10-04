@@ -10,7 +10,7 @@ libsbox의 명령줄 도구로 이미지를 받아 컨테이너를 돌리고, Do
 | `sbox`, `sboxrun` | runc 호환 OCI 런타임(같은 바이너리, 이름만 다름). `sboxrun`은 dockerd/containerd 등록용 |
 | `sbox-image` | 이미지 pull/push/load/save, 스냅샷, OCI 번들 만들기 |
 | `sboxvol` | 이름 있는 볼륨 관리, 백업/복원, Docker 볼륨 플러그인 데몬 |
-| `sboxnet` | Docker 원격 네트워크 + IPAM 플러그인 데몬 |
+| `sboxnet` | Docker 원격 네트워크 + IPAM 플러그인 데몬(`wg-overlay` 포함), `network create/ls/inspect/rm` |
 | `sbox-cni` | CNI 1.0 플러그인 |
 | `sbox-wg` | WireGuard 인터페이스(커널 또는 사용자 공간), 키와 클라이언트 설정 |
 
@@ -54,7 +54,7 @@ sudo sbox delete web                            # 멈춘 컨테이너 지우기 
 
 # 5. 컨테이너 루트 정리 (overlay 언마운트 후 삭제)
 sudo sbox-image ps
-sudo sbox-image rm <ID>                         # bundle이 출력한 ID
+sudo sbox-image rm <ID>                         # bundle이 출력한 ID (-v: 익명 볼륨도 삭제)
 ```
 
 - `sbox-image --snapshotter copy`는 overlay 대신 레이어를 한 디렉터리에 펼칩니다(overlay가 없는 커널,
@@ -118,21 +118,19 @@ docker run --rm -v data:/data alpine sh -c 'echo hi > /data/x'
 docker run --rm --mount type=volume,src=data,dst=/data,volume-driver=sboxvol alpine cat /data/x
 ```
 
-`sbox` 번들에 볼륨 붙이기: `sbox`/`sbox-image bundle` 명령줄에는 `-v` 옵션이 없으므로 config.json의
-`mounts`에 bind 항목을 넣습니다(디렉터리 볼륨의 `_data`를 그대로 씀). 라이브러리에서는
-`vol::PrepareContainerMounts`가 `-v`/`--mount`/`--tmpfs` 문자열을 같은 항목으로 바꾸고, 볼륨을 만들고
-(익명 포함), 이미지 내용을 copy-up하고, tmpfs/장치 볼륨을 마운트하며 사용자를 기록합니다.
+`sbox` 번들에 볼륨 붙이기: `sbox-image bundle`이 docker run과 같은 `-v`/`--mount`/`--tmpfs`를 받습니다.
+내부에서 `vol::PrepareContainerMounts`가 볼륨을 만들고(익명 포함), 컨테이너(번들 ID)를 사용자로 등록하고,
+비어 있는 볼륨에 이미지 내용을 copy-up하고, tmpfs/NFS/장치 볼륨을 마운트한 뒤 config.json `mounts`에 넣습니다.
+`sbox-image rm`이 사용자 등록을 풀고, `rm -v`는 익명 볼륨도 지웁니다.
 
 ```sh
-DATA=$(sudo sboxvol inspect data | jq -r '.[0].Mountpoint')
-jq --arg src "$DATA" '.mounts += [{"destination":"/data","type":"bind","source":$src,"options":["rbind","rw","rprivate"]},
-                                  {"destination":"/scratch","type":"tmpfs","source":"tmpfs","options":["nosuid","nodev","noexec","size=64m"]}]' \
-   /srv/c/app/config.json | sudo tee /srv/c/app/config.json.new >/dev/null && sudo mv /srv/c/app/config.json.new /srv/c/app/config.json
+sudo sbox-image bundle -v data:/data -v /cache --mount type=bind,src=/srv/conf,dst=/conf,readonly \
+     --tmpfs /scratch:size=64m alpine:3.20 /srv/c/app -- /bin/sh -c 'ls /data; echo hi > /scratch/x'
 sudo sbox run --bundle /srv/c/app app1
+sudo sbox-image rm -v <ID>                                   # 볼륨 사용자 해제, 익명 볼륨(/cache) 삭제
 ```
 
-(이렇게 직접 bind하면 볼륨의 사용자 기록이 남지 않으므로 tmpfs/NFS/장치 볼륨은 `sboxvol` 플러그인이나
-라이브러리 경로로 붙이십시오.)
+볼륨 저장소는 기본 `/var/lib/sbox/volumes`(`sboxvol`과 같은 곳)이고 `--volume-root DIR`로 바꿉니다.
 
 ### 네트워크
 
@@ -142,6 +140,15 @@ sudo sbox run --bundle /srv/c/app app1
 sudo sboxnet &                                               # /run/docker/plugins/sboxnet.sock, 상태 /var/lib/sbox/net
 docker network create -d sboxnet --ipam-driver sboxnet --subnet 10.10.0.0/24 sboxlan
 docker run --rm --network sboxlan -p 8080:80 nginx
+```
+
+Docker 없이 같은 상태 디렉터리에 네트워크를 만들고 볼 때는 `sboxnet network` 명령을 씁니다.
+
+```sh
+sudo sboxnet network create --subnet 10.20.0.0/24 web       # -d bridge|macvlan|ipvlan|wg-overlay, -o KEY=VALUE
+sudo sboxnet network ls
+sudo sboxnet network inspect web
+sudo sboxnet network rm web                                  # 연결된 컨테이너가 있으면 실패
 ```
 
 #### `sbox-cni` 설정 예
@@ -185,8 +192,25 @@ docker run --rm --network sboxlan -p 8080:80 nginx
 
 #### `sbox`로 만든 컨테이너를 네트워크에 붙이기
 
-런타임은 runc처럼 네트워크를 만들지 않습니다. 네임스페이스를 먼저 만들어 CNI로 연결하고, 그 경로를
-config.json에 넣습니다.
+런타임은 runc처럼 네트워크를 만들지 않습니다. 가장 간단한 방법은 `sbox-image bundle --network`입니다. 번들 ID
+이름의 netns를 `/var/run/netns`에 만들고 `CNetworkManager::connect`로 네트워크에 붙인 뒤 그 경로를
+config.json에 넣습니다. `-p/--publish [IP:]HOST:CTR[/PROTO]`은 포트를 게시합니다(HOST 0은 임시 포트,
+`--json` 출력의 `Network.Ports`에 실제 값).
+
+```sh
+sudo sboxnet network create --subnet 10.20.0.0/24 web
+sudo sbox-image --json bundle --network web -p 8080:80 nginx:alpine /srv/c/web
+sudo sbox run --detach --bundle /srv/c/web web
+curl http://127.0.0.1:8080/
+sudo sbox delete --force web
+sudo sbox-image rm <ID>                                      # 연결 해제, netns 삭제, 컨테이너 루트 삭제
+```
+
+이미 있는 netns에 넣기만 하려면 `--netns PATH`를 씁니다(`rm`은 그 netns를 건드리지 않음). 상태 디렉터리는
+`--net-state-dir`, netns 디렉터리는 `--netns-dir`로 바꿉니다. 컨테이너의 `/etc/resolv.conf`와 `/etc/hosts`는
+쓰지 않습니다(이미지의 것을 그대로 씀).
+
+CNI를 직접 쓸 때는 네임스페이스를 먼저 만들어 CNI로 연결하고, 그 경로를 config.json에 넣습니다.
 
 ```sh
 sudo ip netns add web                                         # /var/run/netns/web
@@ -245,10 +269,26 @@ QR 코드로 옮깁니다.
 
 #### 호스트 간 컨테이너 오버레이 (`wg-overlay` 드라이버)
 
-여러 호스트의 컨테이너를 한 대역(예: 10.210.0.0/16)에 두려면 vpn 모듈의 `CWgOverlayDriver`를
-`CNetworkManager`에 등록합니다. 각 호스트가 호스트 서브넷 하나(10.210.1.0/24, 10.210.2.0/24 ...)를 맡고,
-다른 호스트를 WireGuard 피어로 둡니다. 지금은 라이브러리 API로 만듭니다(`sboxnet`/`sbox-cni`는 이 드라이버를
-등록하지 않음). 사용자 공간 장치는 네트워크를 만든 프로세스에서 돌므로 오래 사는 데몬에서 만드십시오.
+여러 호스트의 컨테이너를 한 대역(예: 10.210.0.0/16)에 두려면 vpn 모듈의 `CWgOverlayDriver`(`wg-overlay`)를
+씁니다. 각 호스트가 호스트 서브넷 하나(10.210.1.0/24, 10.210.2.0/24 ...)를 맡고, 다른 호스트를 WireGuard
+피어로 둡니다. `sboxnet` 데몬이 이 드라이버를 등록하고 시작할 때 기존 오버레이의 장치를 복구하므로, Docker에서는
+옵션만 주면 됩니다(`sbox-cni`는 등록하지 않음).
+
+```sh
+# /etc/sbox/ov.json (호스트 A)
+# {"privateKey":"<sbox-wg genkey>","hostSubnet":"10.210.1.0/24","listenPort":51820,
+#  "peers":[{"name":"host-b","publicKey":"<B의 공개 키>","endpoint":"192.0.2.2:51820","subnet":"10.210.2.0/24",
+#            "persistentKeepalive":25}]}
+sudo sboxnet &
+docker network create -d sboxnet --subnet 10.210.0.0/16 --ip-range 10.210.1.0/24 --gateway 10.210.1.1 \
+    -o sbox.wg.overlay.file=/etc/sbox/ov.json ov
+docker run --rm --network ov alpine ping -c1 10.210.2.2      # 호스트 B의 컨테이너
+```
+
+커널 `wireguard` 모듈이 없으면 장치는 사용자 공간 구현이고 `sboxnet` 데몬 안에서 돕니다. `sboxnet network create
+-o sbox.wg.overlay.file=...`로 만들 수도 있지만 그 경우 사용자 공간 장치는 명령이 끝나면 내려가고 데몬이 다음에
+시작할 때 복구합니다. 라이브러리에서는 다음과 같습니다(사용자 공간 장치는 네트워크를 만든 프로세스에서 돌므로
+오래 사는 데몬에서 만드십시오).
 
 ```cpp
 net::SNetworkManagerOptions o;

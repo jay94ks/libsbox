@@ -240,18 +240,31 @@ TEST_CASE("wall timeout kills the program and its descendants") {
     CEventLoop loop;
     loop.run([]() -> TTask<void> {
         SBoxPolicy p = basePolicy();
-        p.wallTimeoutMs = 400;
-        CSandbox box = co_await CSandbox::spawn(p, { "/bin/sh", "-c", "sleep 100 & (sleep 200 &) ; while true; do sleep 1; done" });
+        p.wallTimeoutMs = 3000;
+        std::vector<std::string> args = { "/bin/sh", "-c", "sleep 100 & (sleep 200 &) ; echo ready; while true; do sleep 1; done" };
+        CSandbox box = co_await CSandbox::spawn(p, args);
         REQUIRE(box.isValid());
 
-        co_await CEventLoop::current()->sleepFor(200);
-        std::set<pid_t> tree = descendants(box.pid());
+        // --> Collect the tree once the shell started its children (a fixed delay is not
+        // enough on a loaded machine): it reports "ready" after forking both sleeps, and the
+        // loop's first `sleep 1` follows right after.
+        uint8_t buf[16];
+        SIoResult got = co_await box.stdoutPipe().recv(SByteSpan(buf, sizeof(buf)), 2500);
+        CHECK(got.ok());
+        std::set<pid_t> tree;
+        for (int i = 0; i < 200 && tree.size() < 4; ++i) {
+            tree = descendants(box.pid());
+            if (tree.size() < 4) {
+                co_await CEventLoop::current()->sleepFor(5);
+            }
+        }
+
         CHECK(tree.size() >= 4);
 
         SBoxResult r = co_await box.wait();
         CHECK(r.reason == EBEXIT_WALL_TIMEOUT);
-        CHECK(r.wallTimeMs >= 400);
-        CHECK(r.wallTimeMs < 5000);
+        CHECK(r.wallTimeMs >= 3000);
+        CHECK(r.wallTimeMs < 10000);
 
         for (pid_t pid : tree) {
             CHECK_MESSAGE(::kill(pid, 0) != 0, "survivor ", pid);
@@ -433,7 +446,12 @@ TEST_CASE("cpu time limit ends with the cpu reason") {
     SOutcome o = run(p, { "/helpers/cpuburn" });
     REQUIRE(o.valid);
     CHECK(o.result.reason == EBEXIT_CPU_TIME);
-    CHECK(o.result.cpuTimeUs >= 900000);
+    // --> The kernel checks RLIMIT_CPU against tick-sampled user+system time, while the
+    // reported figure is the cgroup's exact runtime. On a contended CPU the tick sampling
+    // overcharges a busy task (up to ~20% seen with 16 parallel runs on 4 cores), so the
+    // figure only has to show that the limit was the cause, not reach the limit exactly.
+    CHECK(o.result.cpuTimeUs >= 500000);
+    CHECK(o.result.cpuTimeUs < 5000000);
 }
 
 TEST_CASE("resource figures come from the cgroup when there is one") {

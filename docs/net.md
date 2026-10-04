@@ -311,7 +311,7 @@ CJson reply = co_await plugin.handle(path, body);   // 예: "/NetworkDriver.Crea
 |---|---|
 | `/Plugin.Activate` | `{"Implements":["NetworkDriver","IpamDriver"]}` |
 | `/NetworkDriver.GetCapabilities` | `{"Scope":"local","ConnectivityScope":"local"}` |
-| `CreateNetwork` | `NetworkID`를 id/이름으로, 일반 옵션(`com.docker.network.generic`)을 드라이버 옵션으로(`sbox.driver`로 bridge/macvlan/ipvlan 선택), `IPv4Data`/`IPv6Data`의 Pool·Gateway·AuxAddresses를 그대로 사용(`ipamDriver: external`) |
+| `CreateNetwork` | `NetworkID`를 id/이름으로, 일반 옵션(`com.docker.network.generic`)을 드라이버 옵션으로(`sbox.driver`로 bridge/macvlan/ipvlan/wg-overlay 선택. 없으면 bridge, 단 `sbox.wg.overlay`나 `sbox.wg.overlay.file`이 있으면 wg-overlay), `IPv4Data`/`IPv6Data`의 Pool·Gateway·AuxAddresses를 그대로 사용(`ipamDriver: external`) |
 | `DeleteNetwork` | 없는 네트워크도 성공 |
 | `CreateEndpoint` | Docker가 준 `Interface.Address/AddressIPv6/MacAddress`로 엔드포인트 생성, Docker가 주지 않은 값만 응답(MAC 등) |
 | `EndpointOperInfo` | `{"Value":{hostInterface, macAddress, addresses, ports}}` |

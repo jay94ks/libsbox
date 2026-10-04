@@ -58,7 +58,7 @@ if(SBOX_BUILD_TESTS)
         # --> The CLI tools are declared after the modules; add_dependencies resolves the names
         # when the build system is generated.
         if(SBOX_BUILD_CLI)
-            add_dependencies(${SBOX_E2E_TARGET} sbox_tool sboxrun_tool sbox_image_cli sbox_cni sboxvol)
+            add_dependencies(${SBOX_E2E_TARGET} sbox_tool sboxrun_tool sbox_image_cli sbox_cni sboxvol sboxnet)
         endif()
 
         # --> Containers, image unpacking and registries: allow more than the default 300 s.

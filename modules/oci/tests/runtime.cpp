@@ -503,15 +503,23 @@ TEST_CASE("hooks run in order, with the state on stdin, in the right namespaces"
         }
 
         REQUIRE_MESSAGE(lines.size() == 7, text);
-        const char* order[] = { "prestart", "createRuntime", "createContainer", "startContainer", "program", "poststart", "poststop" };
-        const char* status[] = { "creating", "creating", "creating", "created", "", "running", "stopped" };
-        std::string host = trim(capture("hostname"));
-        for (size_t i = 0; i < 7; ++i) {
-            CHECK_MESSAGE(lines[i].rfind(order[i], 0) == 0, lines[i]);
-            if (i == 4) {
-                continue;
-            }
 
+        // --> The program runs concurrently with the poststart hooks (the spec only orders
+        // poststart after the program was executed and before start returns), so its line
+        // may land before or after the poststart line. It must come after startContainer and
+        // before poststop; the hooks themselves are strictly ordered.
+        auto program = std::find(lines.begin(), lines.end(), "program");
+        REQUIRE_MESSAGE(program != lines.end(), text);
+        size_t programAt = size_t(program - lines.begin());
+        CHECK_MESSAGE(programAt >= 4, text);
+        CHECK_MESSAGE(programAt <= 5, text);
+        lines.erase(program);
+
+        const char* order[] = { "prestart", "createRuntime", "createContainer", "startContainer", "poststart", "poststop" };
+        const char* status[] = { "creating", "creating", "creating", "created", "running", "stopped" };
+        std::string host = trim(capture("hostname"));
+        for (size_t i = 0; i < 6; ++i) {
+            CHECK_MESSAGE(lines[i].rfind(order[i], 0) == 0, lines[i]);
             CHECK(lines[i].find("\"status\":\"" + std::string(status[i]) + "\"") != std::string::npos);
             CHECK(lines[i].find("\"id\":\"" + e.id + "\"") != std::string::npos);
             // --> createContainer/startContainer run in the container's UTS namespace.

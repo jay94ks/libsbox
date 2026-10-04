@@ -4,3 +4,8 @@
 #   include/sbox/vpn/l2tp/,  src/l2tp/,  tests/l2tp/   IKEv1 (for L2TP/IPsec), L2TP, PPP
 # Sources and tests are globbed recursively, so no stream needs to edit this file.
 sbox_add_module(vpn DEPENDS net LINK certpp::certpp)
+
+# --> The wg plugin test talks HTTP to the sboxnet daemon (cli/sboxnet adds the binary dependency).
+if(TARGET sbox_test_vpn_wg_plugin)
+    target_link_libraries(sbox_test_vpn_wg_plugin PRIVATE sbox::http)
+endif()

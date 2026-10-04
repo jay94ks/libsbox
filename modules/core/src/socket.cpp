@@ -1,7 +1,9 @@
 #include <sbox/core/socket.hpp>
 #include <sbox/core/eventloop.hpp>
+#include <algorithm>
 #include <arpa/inet.h>
 #include <cerrno>
+#include <cstddef>
 #include <cstring>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -379,6 +381,8 @@ namespace sbox {
         if (this != &other) {
             close();
             _fd = std::move(other._fd);
+            _unixEndpoint = other._unixEndpoint;
+            other._unixEndpoint = SEndpoint();
         }
 
         return *this;
@@ -400,11 +404,51 @@ namespace sbox {
 
         if (endpoint.family() == AF_UNIX) {
             const auto* un = reinterpret_cast<const sockaddr_un*>(&endpoint.storage);
-            struct stat st{};
+            size_t pathLength = 0;
+            if (endpoint.length > offsetof(sockaddr_un, sun_path)) {
+                pathLength = ::strnlen(un->sun_path, std::min<size_t>(sizeof(un->sun_path), endpoint.length - offsetof(sockaddr_un, sun_path)));
+            }
 
-            // --> Replace a stale socket file left by a previous run, but never a regular file.
-            if (un->sun_path[0] != 0 && ::lstat(un->sun_path, &st) == 0 && S_ISSOCK(st.st_mode)) {
-                ::unlink(un->sun_path);
+            if (un->sun_path[0] != 0 && pathLength > 0) {
+                std::string path(un->sun_path, pathLength);
+                struct stat st{};
+
+                // --> Replace a stale socket file left by a previous run, but never a regular file.
+                bool exists = ::lstat(path.c_str(), &st) == 0;
+                if (exists && !S_ISSOCK(st.st_mode)) {
+                    return -EADDRINUSE;
+                }
+
+                // --> bind() creates the file before listen() makes it connectable; a client
+                // that watches for the file (dockerd's plugin discovery, a supervisor, a test)
+                // would get ECONNREFUSED in between. Listen under a temporary name, then rename
+                // it over the final path, which also replaces a stale socket atomically.
+                static uint32_t counter = 0;
+                size_t slash = path.rfind('/');
+                std::string dir = slash == std::string::npos ? std::string() : path.substr(0, slash + 1);
+                std::string temp = dir + ".sbox-listen-" + std::to_string(::getpid()) + "-" + std::to_string(++counter);
+                SEndpoint tempEndpoint;
+                if (SEndpoint::fromUnix(temp, tempEndpoint) == SBOX_OK) {
+                    ::unlink(temp.c_str());
+                    if (::bind(fd.get(), reinterpret_cast<const sockaddr*>(&tempEndpoint.storage), tempEndpoint.length) < 0) {
+                        return -errno;
+                    }
+
+                    if (::listen(fd.get(), backlog) < 0 || ::rename(temp.c_str(), path.c_str()) < 0) {
+                        int32_t error = -errno;
+                        ::unlink(temp.c_str());
+                        return error;
+                    }
+
+                    _fd = std::move(fd);
+                    _unixEndpoint = endpoint;
+                    return SBOX_OK;
+                }
+
+                // --> The temporary name does not fit sun_path: bind the path itself.
+                if (exists) {
+                    ::unlink(path.c_str());
+                }
             }
         }
         else {
@@ -426,6 +470,10 @@ namespace sbox {
 
     /* Returns the bound address. */
     SEndpoint CListener::localEndpoint() const noexcept {
+        if (_unixEndpoint.length > 0 && _fd.isValid()) {
+            return _unixEndpoint;
+        }
+
         SEndpoint ep;
         ep.length = sizeof(ep.storage);
         if (::getsockname(_fd.get(), reinterpret_cast<sockaddr*>(&ep.storage), &ep.length) < 0) {
@@ -461,6 +509,7 @@ namespace sbox {
 
     /* Stops listening. */
     void CListener::close() noexcept {
+        _unixEndpoint = SEndpoint();
         if (!_fd.isValid()) {
             return;
         }
