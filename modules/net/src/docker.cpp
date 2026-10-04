@@ -234,8 +234,16 @@ namespace net {
         req.enableIpv6 = options.get("com.docker.network.enable_ipv6").asBool(false);
         req.internal = options.get("com.docker.network.internal").asBool(false);
 
+        // --> An overlay configuration option names its driver (registered by the vpn module);
+        // otherwise the bridge is the default, as with Docker's own drivers.
         auto drv = req.options.find("sbox.driver");
-        req.driver = drv == req.options.end() ? "bridge" : drv->second;
+        if (drv != req.options.end()) {
+            req.driver = drv->second;
+        } else if (req.options.count("sbox.wg.overlay") || req.options.count("sbox.wg.overlay.file")) {
+            req.driver = "wg-overlay";
+        } else {
+            req.driver = "bridge";
+        }
 
         if (!subnetsOf(body.get("IPv4Data"), req.subnets) || !subnetsOf(body.get("IPv6Data"), req.subnets)) {
             co_return errorReply("invalid IPv4Data/IPv6Data", -EINVAL);

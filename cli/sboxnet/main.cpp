@@ -1,12 +1,15 @@
 // sboxnet: Docker remote network driver + IPAM driver plugin daemon.
 // The protocol handlers are sbox::net::CDockerPlugin; this file serves them over HTTP on a UNIX
-// socket (default /run/docker/plugins/sboxnet.sock) until SIGTERM/SIGINT.
+// socket (default /run/docker/plugins/sboxnet.sock) until SIGTERM/SIGINT. Besides the net
+// module's drivers it registers the vpn module's WireGuard overlay driver ("wg-overlay"), whose
+// user-space devices live on this daemon's event loop (restored at startup).
 #include <sbox/core/eventloop.hpp>
 #include <sbox/core/file.hpp>
 #include <sbox/core/socket.hpp>
 #include <sbox/http/server.hpp>
 #include <sbox/net/docker.hpp>
 #include <sbox/net/network.hpp>
+#include <sbox/vpn/wg/overlay.hpp>
 #include <cerrno>
 #include <csignal>
 #include <cstdio>
@@ -25,11 +28,16 @@ namespace {
         "Docker remote network driver and IPAM driver plugin backed by libsbox networking.\n"
         "Register with dockerd by its socket in /run/docker/plugins, then:\n"
         "  docker network create -d sboxnet --ipam-driver sboxnet NAME\n"
+        "WireGuard overlay across hosts (driver wg-overlay, picked by the option):\n"
+        "  docker network create -d sboxnet --subnet 10.210.0.0/16 --ip-range 10.210.1.0/24 \\\n"
+        "      --gateway 10.210.1.1 -o sbox.wg.overlay.file=/etc/sbox/ov.json NAME\n"
         "\n"
         "Options:\n"
         "  --socket PATH      plugin socket (default /run/docker/plugins/sboxnet.sock)\n"
         "  --state-dir DIR    network state (default /var/lib/sbox/net, rootless $XDG_RUNTIME_DIR/sbox/net)\n"
         "  --no-firewall      do not program the sbox nftables table\n"
+        "  --host-netns PATH  network namespace treated as the host (default: this process's)\n"
+        "  --wg-uapi-dir DIR  UAPI sockets of user-space WireGuard devices (default /var/run/wireguard)\n"
         "  -h, --help         show this help\n";
 
     /* Prints an error and returns the exit code 1. */
@@ -51,9 +59,20 @@ namespace {
         }
     }
 
-    /* Serves until stopped. */
-    TTask<int32_t> serveLoop(http::CHttpServer& server, CListener& listener, int sfd) {
+    /* Restores the overlay devices, then serves until stopped. */
+    TTask<int32_t> serveLoop(http::CHttpServer& server, CListener& listener, int sfd, net::CNetworkManager& manager,
+        vpn::CWgOverlayDriver& overlay)
+    {
         CEventLoop* loop = CEventLoop::current();
+        // --> User-space WireGuard devices of overlay networks die with the process that ran
+        // them; bring them back before answering Docker (a failure is reported, not fatal).
+        int32_t restored = co_await overlay.restore(manager);
+        if (restored < 0) {
+            std::fprintf(stderr, "sboxnet: cannot restore wg-overlay devices: %s\n", std::strerror(-restored));
+        } else if (restored > 0) {
+            std::fprintf(stderr, "sboxnet: restored %d wg-overlay device(s)\n", int(restored));
+        }
+
         loop->spawn(watchSignals(sfd, server));
         int32_t rc = co_await server.serve(listener);
         loop->cancelFd(sfd);
@@ -87,6 +106,7 @@ int main(int argc, char** argv) {
     std::string socket = "/run/docker/plugins/sboxnet.sock";
     net::SNetworkManagerOptions options;
     options.stateDir = net::DefaultNetworkStateDir();
+    vpn::SWgOverlayDriverOptions overlayOptions;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -103,6 +123,22 @@ int main(int argc, char** argv) {
         if (arg.compare(0, 8, "--socket") == 0) {
             if (!optionValue(argc, argv, i, "--socket", socket) || socket.empty()) {
                 return failWith("missing --socket value");
+            }
+
+            continue;
+        }
+
+        if (arg.compare(0, 13, "--host-netns") == 0) {
+            if (!optionValue(argc, argv, i, "--host-netns", options.hostNetns) || options.hostNetns.empty()) {
+                return failWith("missing --host-netns value");
+            }
+
+            continue;
+        }
+
+        if (arg.compare(0, 13, "--wg-uapi-dir") == 0) {
+            if (!optionValue(argc, argv, i, "--wg-uapi-dir", overlayOptions.uapiDir) || overlayOptions.uapiDir.empty()) {
+                return failWith("missing --wg-uapi-dir value");
             }
 
             continue;
@@ -158,6 +194,8 @@ int main(int argc, char** argv) {
 
     CEventLoop loop;
     net::CNetworkManager manager(options);
+    auto overlay = std::make_shared<vpn::CWgOverlayDriver>(overlayOptions);
+    manager.registerDriver(overlay);
     net::CDockerPlugin plugin(manager);
 
     http::SServerOptions serverOptions;
@@ -178,7 +216,7 @@ int main(int argc, char** argv) {
     });
 
     std::fprintf(stderr, "sboxnet: serving network/IPAM plugin on %s (state %s)\n", socket.c_str(), options.stateDir.c_str());
-    rc = loop.run(serveLoop(server, listener, sfd.get()));
+    rc = loop.run(serveLoop(server, listener, sfd.get(), manager, *overlay));
     listener.close();
     ::unlink(socket.c_str());
     return rc < 0 ? failWith(std::string("server: ") + std::strerror(-rc)) : 0;

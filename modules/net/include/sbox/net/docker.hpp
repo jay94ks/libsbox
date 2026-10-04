@@ -27,8 +27,9 @@ namespace net {
      *     RequestAddress, ReleaseAddress
      *
      * Networks are created with the sbox driver named by the generic option "sbox.driver"
-     * (bridge by default, or macvlan/ipvlan) and Docker's addresses (from whichever IPAM driver
-     * Docker used). Docker moves the interface into the sandbox itself (Join returns SrcName).
+     * (bridge by default, or macvlan/ipvlan, or any registered driver such as the vpn module's
+     * "wg-overlay", which is also implied by an "sbox.wg.overlay" / "sbox.wg.overlay.file"
+     * option) and Docker's addresses (from whichever IPAM driver Docker used). Docker moves the interface into the sandbox itself (Join returns SrcName).
      */
     class SBOX_API CDockerPlugin {
     private:
