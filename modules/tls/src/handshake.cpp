@@ -323,7 +323,8 @@ namespace tls {
                     Reader formats = data.block(1);
                     bool uncompressed = false;
                     while (formats.ok() && formats.left() > 0) {
-                        uncompressed = uncompressed || formats.u8() == 0;
+                        uint32_t format = formats.u8();
+                        uncompressed = uncompressed || format == 0;
                     }
 
                     if (!uncompressed) {
