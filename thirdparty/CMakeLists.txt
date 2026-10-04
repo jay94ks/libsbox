@@ -9,3 +9,8 @@ endif()
 set(CERTPP_BUILD_SHARED OFF CACHE BOOL "" FORCE)
 set(CERTPP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 add_subdirectory(libcertpp EXCLUDE_FROM_ALL)
+
+# --> libcertpp's headers do not build cleanly under libsbox's warning set (-Wshadow on its
+# span/key-pair constructors), so consumers see them as system headers. CMake < 3.25 ignores
+# the property, which only costs warnings there.
+set_target_properties(certpp PROPERTIES SYSTEM ON)
