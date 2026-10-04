@@ -8,6 +8,7 @@
 #include <sbox/vpn/ipsec/certs.hpp>
 #include <sbox/vpn/ipsec/datapath.hpp>
 #include <sbox/vpn/ipsec/ikemessage.hpp>
+#include <sbox/vpn/ipsec/ikesocket.hpp>
 #include <functional>
 #include <memory>
 #include <string>
@@ -170,6 +171,16 @@ namespace vpn {
          * Sends DELETE to every peer, removes all SAs and stops.
          */
         TTask<void> stop();
+
+        /**
+         * Forwards IKEv1 (ISAKMP major version 1) datagrams arriving on the shared UDP 500/4500
+         * sockets to `handler`, so an IKEv1 implementation (L2TP/IPsec) can run next to this
+         * responder. Without a handler they are dropped.
+         */
+        void ikev1Handler(FIkeDatagramHandler handler);
+
+        /** Returns the IKE sockets (valid after start), e.g. to answer forwarded IKEv1 messages. */
+        CIkeSocket* socket() noexcept;
 
         /** Returns the bound IKE port. */
         uint16_t port() const noexcept;

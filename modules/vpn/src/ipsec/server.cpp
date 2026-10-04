@@ -214,6 +214,7 @@ namespace vpn {
     struct CIkeServer::SState : std::enable_shared_from_this<CIkeServer::SState> {
         SIkeServerConfig config;
         std::function<void(EIkeLogLevel, const std::string&)> sink;
+        FIkeDatagramHandler v1;
         CIkeSocket socket;
         IIpsecDataPathPtr dataPath;
         AsyncQueue<WorkItem> queue;
@@ -453,6 +454,14 @@ namespace vpn {
             }
 
             dg.data.resize(h.length);
+            if ((h.version >> 4) == 1) {
+                if (v1) {
+                    v1(dg);
+                }
+
+                co_return;
+            }
+
             if ((h.version >> 4) != 2) {
                 co_return;
             }
@@ -2054,6 +2063,16 @@ namespace vpn {
         if (co_await done->done.wait()) {
             done->done.pop();
         }
+    }
+
+    /* IKEv1 forwarding. */
+    void CIkeServer::ikev1Handler(FIkeDatagramHandler handler) {
+        _state->v1 = std::move(handler);
+    }
+
+    /* Shared sockets. */
+    CIkeSocket* CIkeServer::socket() noexcept {
+        return &_state->socket;
     }
 
     /* Bound IKE port. */

@@ -649,3 +649,51 @@ TEST_CASE("Duplicated requests are answered from the responder's cache, never pr
         co_await server.stop();
     }());
 }
+
+TEST_CASE("IKEv1 datagrams on the shared ports go to the IKEv1 handler") {
+    CEventLoop loop;
+    loop.run([]() -> TTask<void> {
+        SIkeServerConfig cfg = baseConfig();
+        SIkePsk psk;
+        psk.secret = "v1";
+        cfg.psks.push_back(psk);
+        auto path = std::make_shared<FakeDataPath>();
+        CIkeServer server(cfg);
+        std::vector<SIkeDatagram> v1;
+        server.ikev1Handler([&v1](SIkeDatagram& dg) { v1.push_back(dg); });
+        REQUIRE(co_await server.start(path) == SBOX_OK);
+        REQUIRE(server.socket() != nullptr);
+
+        // --> An ISAKMP Main Mode header (version 1.0) to both ports.
+        SIkeHeader h;
+        h.spiI = 0x42;
+        h.version = 0x10;
+        h.exchange = 2;
+        std::vector<uint8_t> msg;
+        h.length = IKE_HEADER_SIZE;
+        h.encode(msg);
+
+        CIkeSocket sender;
+        SIkeSocketOptions so;
+        so.address = "127.0.0.1";
+        so.port = 0;
+        so.natPort = 0;
+        REQUIRE(sender.open(so) == SBOX_OK);
+        SEndpoint to;
+        SEndpoint::fromIp("127.0.0.1", server.port(), to);
+        REQUIRE(sender.send(BytesOf(msg), SEndpoint(), to, false) == SBOX_OK);
+        SEndpoint::fromIp("127.0.0.1", server.natPort(), to);
+        REQUIRE(sender.send(BytesOf(msg), SEndpoint(), to, true) == SBOX_OK);
+
+        for (int32_t i = 0; i < 100 && v1.size() < 2; ++i) {
+            co_await CEventLoop::current()->sleepFor(10);
+        }
+
+        REQUIRE(v1.size() == 2);
+        CHECK(v1[0].data == msg);
+        CHECK(v1[1].natT);
+        CHECK(server.sessions().empty());
+        sender.close();
+        co_await server.stop();
+    }());
+}

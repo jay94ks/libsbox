@@ -36,6 +36,10 @@ IKEv1은 아직 없고 후속 작업이 붙입니다. 그대로 재사용할 수
 - `ikecrypto.hpp`: DH 그룹(IKEv1 Oakley 그룹 2/14 포함), HMAC PRF, `CIpsecCipher`(IKEv1 Phase 2 ESP 키도 같은 형태).
 - `CXfrm`/`IIpsecDataPath`/`SIpsecChildSa`: Quick Mode가 만든 SA를 설치하는 경로. L2TP/IPsec은 transport
   모드이므로 커널 경로의 transport 지원(`EXMODE_TRANSPORT`)을 씁니다(사용자 공간 경로는 tunnel 전용).
+- `CIkeServer::ikev1Handler()`/`socket()`: 같은 UDP 500/4500에서 ISAKMP 주 버전 1 메시지를 IKEv1 구현으로
+  넘기고, 그 구현은 같은 소켓으로 답합니다(두 응답자가 한 프로세스에서 포트를 공유).
+- 사용자 공간 transport 모드 ESP가 필요하면(L2TP는 UDP 1701을 transport 모드로 보호) `CEspSa`를 직접 쓰면
+  됩니다: `encapsulate(udpSegment, 17, out)` 후 `CIkeSocket::sendEsp`(NAT-T) 또는 raw ESP 소켓.
 - `SIkeHeader::parse`, `ParseIkePayloads`(ISAKMP 페이로드 일반 헤더와 같은 형식), `SIkeId`, `CIkeCertificate`,
   `MsChapNtPasswordHash` 등 MS-CHAPv2 함수(PPP 인증에 그대로 사용).
 
