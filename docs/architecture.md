@@ -86,3 +86,8 @@ SBoxResult r = co_await box.wait();
 - 이미지: OCI image layout과 Docker 이미지 manifest(schema2), Registry API v2, `docker save` 형식.
 - 볼륨: Docker 볼륨 플러그인 프로토콜, `local` 드라이버와 같은 옵션(`type`, `device`, `o`).
 - 네트워크: CNI 1.0 플러그인과 Docker 네트워크/IPAM 원격 플러그인 프로토콜.
+
+## 제한 사항
+
+모듈 전체의 제한 사항, 미구현 사항, 개발 환경에서 검증하지 못한 경로는 [limitations.md](limitations.md)에
+모아 두었습니다.

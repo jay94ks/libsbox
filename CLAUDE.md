@@ -43,4 +43,5 @@ ctest --test-dir build -j8 -L <module>                  # 한 모듈
 - [docs/architecture.md](docs/architecture.md): 모듈, 의존 관계, 실행 모델, 위협 모델
 - [docs/coding-conventions.md](docs/coding-conventions.md)
 - `docs/<module>.md`: 모듈별 설계(현재 상태)
+- [docs/limitations.md](docs/limitations.md): 모듈 전체의 제한 사항과 미구현 사항(모듈 문서의 "제한 사항" 절과 함께 갱신)
 - `docs/logs/`: 작업 기록

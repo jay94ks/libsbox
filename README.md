@@ -72,5 +72,6 @@ ctest --test-dir build -j8 --output-on-failure
 
 - [아키텍처](docs/architecture.md): 모듈 구성, 실행 모델, 위협 모델
 - [빠른 시작](docs/usage.md)
+- [제한 사항과 미구현 사항](docs/limitations.md)
 - [코딩 컨벤션](docs/coding-conventions.md)
 - 모듈별 문서: `docs/<모듈>.md`, 통합 테스트: [docs/e2e.md](docs/e2e.md)
